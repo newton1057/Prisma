@@ -12,7 +12,8 @@ Plugin y app nativa de macOS que avisa cuando termina un turno o se solicita inf
 - **Modo `<ForPrisma>`**:
   - En **OpenCode** (`ctx.session.hook("context")`), **Codex** (`~/.codex/AGENTS.md`) y **Claude Code** (`~/.claude/CLAUDE.md`), el agente incluye al final de cada respuesta o pregunta un bloque `<ForPrisma>...</ForPrisma>` de 1 a 3 frases naturales libre de URLs, rutas de archivos, comandos o Markdown.
 - **Fin de turno y preguntas en vivo**:
-  - El hook `Stop` / `PreToolUse` (en Codex y Claude Code) o el plugin de servidor (en OpenCode, suscrito a `session.execution.succeeded`, `session.idle`, `question.v2.asked` y `tool.execute.before`) ejecuta `on_stop.sh`.
+  - El hook `Stop` / `PreToolUse` / `PermissionRequest` (en Codex y Claude Code) o el plugin de servidor (en OpenCode, suscrito a `session.execution.succeeded`, `session.idle`, `question.v2.asked` y `tool.execute.before`) ejecuta `on_stop.sh`.
+  - En Codex se registran y confían automáticamente en `~/.codex/hooks.json` los tres eventos (`Stop`, `PreToolUse` para `request_user_input` / `request_user_input_async` y `PermissionRequest` para confirmaciones de comandos y permisos).
   - El extractor descarta bloques de código o menciones en línea y toma únicamente el último bloque `<ForPrisma>` real (o formatea las opciones de la pregunta si se invocó la herramienta directamente).
 - **Reproducción y animación**:
   - `on_stop.sh` envía el texto limpio a **Prisma.app** por `127.0.0.1`.

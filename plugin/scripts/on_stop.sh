@@ -20,7 +20,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 EVENT="$(printf '%s' "$INPUT" | jq -r '.hook_event_name // "Stop"' 2>/dev/null)"
-if [ -n "$EVENT" ] && [ "$EVENT" != "Stop" ] && [ "$EVENT" != "PreToolUse" ]; then
+if [ -n "$EVENT" ] && [ "$EVENT" != "Stop" ] && [ "$EVENT" != "PreToolUse" ] && [ "$EVENT" != "PermissionRequest" ]; then
   echo '{}'
   exit 0
 fi
@@ -29,36 +29,117 @@ fi
 MESSAGE="$(printf '%s' "$INPUT" | jq -r '.last_assistant_message // empty' 2>/dev/null)"
 SOURCE="$(printf '%s' "$INPUT" | jq -r '.source // "codex"' 2>/dev/null)"
 
-# 1b. Si es PreToolUse de una herramienta de preguntas (AskUserQuestion / request_user_input / question)
+detect_source_from_transcript() {
+  local path="$1"
+  if [ -n "$path" ] && [ -f "$path" ]; then
+    if head -n 5 "$path" 2>/dev/null | grep -q '"type":"session_meta"'; then
+      printf 'codex'
+    else
+      printf 'claude-code'
+    fi
+    return 0
+  fi
+  printf '%s' "$SOURCE"
+}
+
+# Devuelve el bloque <ForPrisma> del mensaje de asistente inmediatamente anterior
+# a una pregunta o solicitud de permiso (sin llamadas a herramientas de por medio)
+# únicamente si formula una pregunta (contiene ? o ¿). Así evitamos leer mensajes
+# de estado (<ForPrisma> en commentary de Codex) que no corresponden a la pregunta.
+recent_question_forprisma_text() {
+  local path="$1"
+  [ -f "$path" ] || return 0
+
+  local text=""
+  if head -n 5 "$path" 2>/dev/null | grep -q '"type":"session_meta"'; then
+    # Codex: solo tomar el último response_item relevante si es un mensaje de assistant
+    text="$(tail -n 60 "$path" 2>/dev/null | jq -rs '
+      [ .[]
+        | select(.type == "response_item")
+        | .payload
+        | select(.type == "message" or .type == "function_call_output" or .type == "custom_tool_call_output")
+      ]
+      | last
+      | if . != null and .type == "message" and .role == "assistant" then
+          ([ .content[]? | select(.type == "output_text" or .type == "text") | .text ] | join("\n"))
+        else
+          ""
+        end
+    ' 2>/dev/null || true)"
+  else
+    # Claude Code: última línea de assistant si no hubo tool_result después
+    text="$(tail -n 25 "$path" 2>/dev/null | jq -rs '
+      [ .[] | select(.type == "assistant" or .type == "user" or (.message.role? != null)) ]
+      | last
+      | if (.message.role? // .type) == "assistant" then
+          ([ .message.content[]? | select(.type == "text") | .text ] | join("\n"))
+        else
+          ""
+        end
+    ' 2>/dev/null || true)"
+  fi
+
+  if [ -n "$text" ] && printf '%s' "$text" | grep -qiE '<\s*ForPri(s)?ma\s*>' && printf '%s' "$text" | grep -qE '[?¿]'; then
+    printf '%s' "$text"
+  fi
+}
+
+extract_questions_from_tool_input() {
+  printf '%s' "$INPUT" | jq -r '
+    (.tool_input // {})
+    | if type == "string" then (fromjson? // {}) else . end
+    | if (.questions | type) == "array" and (.questions | length) > 0 then
+        .questions
+        | map(
+            ((.question // .title // .header // "") | tostring | sub("^\\s+|\\s+$"; "")) as $q
+            | ((.options // [])
+                | map(
+                    if type == "string" then .
+                    elif type == "object" then (.label // .title // .value // "")
+                    else ""
+                    end
+                    | tostring
+                    | sub("\\s*\\((Recommended|Recomendado)\\)\\s*"; "")
+                    | sub("^\\s+|\\s+$"; "")
+                  )
+                | map(select(length > 0))
+              ) as $opts
+            | if ($q | length) == 0 then ""
+              elif ($opts | length) > 0 then "\($q) Opciones: \($opts | join(", "))."
+              else $q
+              end
+          )
+        | map(select(length > 0))
+        | join(" ")
+      elif (.message | type) == "string" and (.message | length) > 0 then
+        .message
+      else
+        ""
+      end
+  ' 2>/dev/null || true
+}
+
+# 1b. Si es PreToolUse de una herramienta de preguntas
 if [ "$EVENT" = "PreToolUse" ]; then
   TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)"
   case "$TOOL_NAME" in
-    AskUserQuestion|request_user_input|question)
+    AskUserQuestion|request_user_input|request_user_input_async|send_user_message_async|send_message_to_user_async|question)
+      SOURCE="codex"
+      [ "$TOOL_NAME" = "AskUserQuestion" ] && SOURCE="claude-code"
+
       TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)"
+      SOURCE="$(detect_source_from_transcript "$TRANSCRIPT_PATH")"
+
+      QUESTIONS_TEXT="$(extract_questions_from_tool_input)"
+      RECENT_TEXT=""
       if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
-        SOURCE="claude-code"
-        RECENT_TEXT="$(grep '"role":"assistant"' "$TRANSCRIPT_PATH" 2>/dev/null | tail -n 20 | jq -rs '
-          map(.message.content[]? | select(.type == "text") | .text) | map(select(length > 0)) | last // empty
-        ' 2>/dev/null || true)"
-        if printf '%s' "$RECENT_TEXT" | grep -qiE '<\s*ForPri(s)?ma\s*>'; then
-          MESSAGE="$RECENT_TEXT"
-        fi
+        RECENT_TEXT="$(recent_question_forprisma_text "$TRANSCRIPT_PATH")"
       fi
-      if [ -z "$MESSAGE" ] || [ "$MESSAGE" = "null" ]; then
-        MESSAGE="$(printf '%s' "$INPUT" | jq -r '
-          (.tool_input.questions // [])
-          | map(
-              (.question // "") as $q
-              | ((.options // []) | map(.label // "" | sub("\\s*\\(Recommended\\)\\s*"; "")) | map(select(length > 0))) as $opts
-              | if ($opts | length) > 0 then
-                  "\($q) Opciones: \($opts | join(", "))."
-                else
-                  $q
-                end
-            )
-          | map(select(length > 0))
-          | join(" ")
-        ' 2>/dev/null || true)"
+
+      if [ -n "$QUESTIONS_TEXT" ] && [ "$QUESTIONS_TEXT" != "null" ]; then
+        MESSAGE="$QUESTIONS_TEXT"
+      elif [ -n "$RECENT_TEXT" ]; then
+        MESSAGE="$RECENT_TEXT"
       fi
       ;;
     *)
@@ -68,17 +149,83 @@ if [ "$EVENT" = "PreToolUse" ]; then
   esac
 fi
 
-# 2. Si viene vacío, extraer el último mensaje de assistant desde transcript_path (Claude Code JSONL)
+# 1c. Si es PermissionRequest (Codex o Claude Code pide confirmación/permiso al usuario)
+if [ "$EVENT" = "PermissionRequest" ]; then
+  TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)"
+  TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)"
+  SOURCE="$(detect_source_from_transcript "$TRANSCRIPT_PATH")"
+
+  QUESTIONS_TEXT="$(extract_questions_from_tool_input)"
+  if [ -n "$QUESTIONS_TEXT" ] && [ "$QUESTIONS_TEXT" != "null" ]; then
+    MESSAGE="$QUESTIONS_TEXT"
+  else
+    PERM_DESC="$(printf '%s' "$INPUT" | jq -r '
+      (.tool_input // {})
+      | if type == "string" then (fromjson? // {}) else . end
+      | (.description // .justification // .reason // "")
+      | tostring
+      | sub("^\\s+|\\s+$"; "")
+    ' 2>/dev/null || true)"
+
+    if [ -n "$PERM_DESC" ] && [ "$PERM_DESC" != "null" ]; then
+      case "$PERM_DESC" in
+        network-access\ *)
+          MESSAGE="¿Me permites acceso de red para continuar?"
+          ;;
+        *)
+          MESSAGE="$PERM_DESC"
+          ;;
+      esac
+    fi
+  fi
+
+  if [ -z "$MESSAGE" ] || [ "$MESSAGE" = "null" ]; then
+    if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+      MESSAGE="$(recent_question_forprisma_text "$TRANSCRIPT_PATH")"
+    fi
+  fi
+
+  if [ -z "$MESSAGE" ] || [ "$MESSAGE" = "null" ]; then
+    case "$TOOL_NAME" in
+      apply_patch|Edit|Write)
+        MESSAGE="¿Me permites aplicar los cambios en los archivos?"
+        ;;
+      Bash|write_stdin)
+        MESSAGE="¿Me permites ejecutar este comando en la terminal?"
+        ;;
+      request_permissions)
+        MESSAGE="¿Me permites conceder los permisos solicitados para continuar?"
+        ;;
+      *)
+        MESSAGE="¿Me permites continuar con esta acción?"
+        ;;
+    esac
+  fi
+fi
+
+# 2. Si viene vacío en Stop, extraer el último mensaje de assistant desde transcript_path (Claude Code o Codex JSONL)
 if [ -z "$MESSAGE" ] || [ "$MESSAGE" = "null" ]; then
   TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)"
   if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
-    SOURCE="claude-code"
+    SOURCE="$(detect_source_from_transcript "$TRANSCRIPT_PATH")"
     for _ in 1 2 3; do
-      LAST_LINES="$(grep '"role":"assistant"' "$TRANSCRIPT_PATH" 2>/dev/null | tail -n 100 || true)"
-      if [ -n "$LAST_LINES" ]; then
-        MESSAGE="$(printf '%s\n' "$LAST_LINES" | jq -rs '
-          map(.message.content[]? | select(.type == "text") | .text) | map(select(length > 0)) | last // empty
+      if [ "$SOURCE" = "codex" ]; then
+        MESSAGE="$(tail -n 200 "$TRANSCRIPT_PATH" 2>/dev/null | jq -rs '
+          map(select(.type == "response_item"
+                     and .payload.type == "message"
+                     and .payload.role == "assistant")
+              | .payload.content[]?
+              | select(.type == "output_text" or .type == "text")
+              | .text)
+          | map(select(length > 0)) | last // empty
         ' 2>/dev/null || true)"
+      else
+        LAST_LINES="$(grep '"role":"assistant"' "$TRANSCRIPT_PATH" 2>/dev/null | tail -n 100 || true)"
+        if [ -n "$LAST_LINES" ]; then
+          MESSAGE="$(printf '%s\n' "$LAST_LINES" | jq -rs '
+            map(.message.content[]? | select(.type == "text") | .text) | map(select(length > 0)) | last // empty
+          ' 2>/dev/null || true)"
+        fi
       fi
       if [ -n "$MESSAGE" ] && [ "$MESSAGE" != "null" ]; then
         break
@@ -155,6 +302,23 @@ fi
 
 CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)"
 SESSION="$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)"
+
+# 4. Evitar hablar dos veces el mismo texto seguido dentro de la misma sesión
+#    (por ejemplo si PreToolUse y PermissionRequest o Stop disparan sobre la misma pregunta).
+DEDUPE_FILE="$SUPPORT/tmp/last_spoken.json"
+mkdir -p "$SUPPORT/tmp"
+NOW_TS="$(date +%s)"
+SIGNATURE="${SESSION}|${MESSAGE}"
+if [ -f "$DEDUPE_FILE" ]; then
+  PREV_SIG="$(jq -r '.signature // empty' "$DEDUPE_FILE" 2>/dev/null || true)"
+  PREV_TS="$(jq -r '.timestamp // 0' "$DEDUPE_FILE" 2>/dev/null || echo 0)"
+  if [ "$PREV_SIG" = "$SIGNATURE" ] && [ $((NOW_TS - PREV_TS)) -lt 45 ]; then
+    log "Aviso duplicado omitido (${SOURCE}, ${EVENT})."
+    echo '{}'
+    exit 0
+  fi
+fi
+jq -n --arg sig "$SIGNATURE" --argjson ts "$NOW_TS" '{signature: $sig, timestamp: $ts}' > "$DEDUPE_FILE" 2>/dev/null || true
 
 app_is_alive() {
   local port="$1"
