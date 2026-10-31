@@ -1,27 +1,26 @@
 ---
 name: prisma
-description: Configura y prueba Prisma, el orbe estilo Siri AI iOS 27 y voz neural que avisa cuando Codex, Claude Code u OpenCode terminan un turno o hacen preguntas al usuario.
+description: Configure and test Prisma, the animated orb and neural voice that announces when Codex, Claude Code, or OpenCode finish a turn or ask a question.
 ---
 
 # Prisma
 
-Plugin y app nativa de macOS que avisa cuando termina un turno o se solicita información al usuario en **Codex**, **Claude Code** u **OpenCode**: despliega un orbe estilo Siri AI iOS 27 desde el borde superior (debajo del Notch) y lee con voz neural únicamente el bloque `<ForPrisma>...</ForPrisma>`.
+Prisma is a plugin and macOS or Windows application that announces completed turns and requests for user input in **Codex**, **Claude Code**, and **OpenCode**. It displays a floating orb and speaks the agent's `<ForPrisma>...</ForPrisma>` summary.
 
-## Cómo funciona
+## How it works
 
-- **Modo `<ForPrisma>`**:
-  - En **OpenCode** (`ctx.session.hook("context")`), **Codex** (`~/.codex/AGENTS.md`) y **Claude Code** (`~/.claude/CLAUDE.md`), el agente incluye al final de cada respuesta o pregunta un bloque `<ForPrisma>...</ForPrisma>` de 1 a 3 frases naturales libre de URLs, rutas de archivos, comandos o Markdown.
-- **Fin de turno y preguntas en vivo**:
-  - El hook `Stop` / `PreToolUse` / `PermissionRequest` (en Codex y Claude Code) o el plugin de servidor (en OpenCode, suscrito a `session.execution.succeeded`, `session.idle`, `question.v2.asked` y `tool.execute.before`) ejecuta `on_stop.sh`.
-  - En Codex se registran y confían automáticamente en `~/.codex/hooks.json` los tres eventos (`Stop`, `PreToolUse` para `request_user_input` / `request_user_input_async` y `PermissionRequest` para confirmaciones de comandos y permisos).
-  - El extractor descarta bloques de código o menciones en línea y toma únicamente el último bloque `<ForPrisma>` real (o formatea las opciones de la pregunta si se invocó la herramienta directamente).
-- **Reproducción y animación**:
-  - `on_stop.sh` envía el texto limpio a **Prisma.app** por `127.0.0.1`.
-  - La app despliega el orbe con horizonte prismático reactivo al audio y reproduce la voz con **Edge Neural TTS (Ava)**, **Piper** o **Apple Paulina**.
-  - Mientras habla, Prisma atenúa la música y los videos del sistema y sube su propia voz; al terminar restaura el volumen (configurable en **Ajustes → Audio de fondo**).
+- **Voice block:** OpenCode (`ctx.session.hook("context")`), Codex (`~/.codex/AGENTS.md`), and Claude Code (`~/.claude/CLAUDE.md`) instruct the agent to end each response or question with a one-to-three-sentence `<ForPrisma>` block in the user's language, without URLs, file paths, commands, or Markdown.
+- **Turn completion and questions:** Codex and Claude Code use `Stop`, `PreToolUse`, and `PermissionRequest` hooks. OpenCode subscribes to `session.execution.succeeded`, `session.idle`, `question.v2.asked`, and `tool.execute.before`. The extractor ignores code examples, selects the last real voice block, and can format question options when a question tool is called directly.
+- **Playback:** The platform-specific hook sends cleaned text to Prisma on `127.0.0.1`: `on_stop.sh` on macOS or `%LOCALAPPDATA%/Prisma/hook.py` on Windows. Prisma plays Edge Neural TTS (Ava), Piper, or a system voice and displays the orb. Background audio ducking is configurable.
 
-## Prueba rápida
+The macOS installer attempts to register and trust the Codex hooks. On Windows, the installer registers them, but Codex may require the user to review and trust them.
+
+## Quick test
+
+On macOS:
 
 ```bash
-~/Desktop/Prisma/test.sh "Hola. Prisma está funcionando."
+~/Desktop/Prisma/test.sh "Hello. Prisma is working."
 ```
+
+For Windows installation and testing, see `docs/windows.md` in the project. The integration targets native Windows agents; WSL requires separate configuration. Windows functionality still needs validation on a Windows machine.

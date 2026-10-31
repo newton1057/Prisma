@@ -2,40 +2,50 @@
 
 # ◈ Prisma
 
-### Tu agente terminó. Prisma te lo cuenta.
+### Your agent finished. Prisma tells you about it.
 
-Una app nativa para macOS que convierte las respuestas y preguntas de tus agentes de programación en avisos de voz, acompañados de un orbe animado.
+Voice notifications and an animated orb for your coding agents on macOS and Windows.
 
 **Codex · Claude Code · OpenCode**
 
-[Instalación](#instalación) · [Cómo funciona](#cómo-funciona) · [Configuración](#configuración) · [Solución de problemas](#solución-de-problemas)
+[Installation](#installation) · [How it works](#how-it-works) · [Settings](#settings) · [Troubleshooting](#troubleshooting)
 
 </div>
 
 ---
 
-Trabajar con un agente no siempre significa quedarse mirando la terminal. Con Prisma puedes seguir con otra tarea y escuchar cuándo terminó, qué hizo o qué necesita de ti.
+You don't have to watch the terminal while an agent works. Prisma lets you get on with something else and hear when your agent finishes, what it did, or what it needs from you.
 
-Cuando llega un aviso, aparece un orbe flotante que reacciona a la voz. No toma el foco ni bloquea tus clics. También puede atenuar el audio de fondo mientras habla y restaurar el volumen al terminar.
+An animated floating orb appears with each notification. Prisma can also lower background audio while it speaks and restore it afterward. On macOS, the orb reacts to audio; on Windows, it uses a pulsing animation.
 
-## Qué incluye
+## Features
 
-- **Avisos al terminar y al hacer preguntas.** Prisma se integra con Codex, Claude Code y OpenCode para anunciar resultados y solicitudes de información o confirmación.
-- **Resúmenes pensados para escuchar.** Los agentes reciben instrucciones para añadir un breve bloque de voz a sus respuestas; Prisma lo extrae y limpia el texto antes de leerlo.
-- **Voces a tu elección.** Usa Edge Neural TTS, Piper local o la voz de Apple. La voz predeterminada es Ava Multilingüe; si Edge falla, Prisma intenta usar Piper y después Apple.
-- **Orbe configurable.** Elige su posición y si permanece visible un momento después de hablar.
-- **Audio de fondo ajustable.** Baja temporalmente el volumen del dispositivo de salida para que puedas escuchar el aviso. Puedes cambiar la intensidad o desactivarlo.
+- **Completion and question notifications.** Hear updates and requests for information or confirmation from Codex, Claude Code, and OpenCode.
+- **Summaries made for listening.** Agents are instructed to add a short voice block to their responses; Prisma extracts and cleans it before speaking.
+- **A choice of voices.** Use Edge Neural TTS, local Piper, or a system voice. The default is Ava Multilingual; if Edge fails, Prisma tries Piper and then the system voice.
+- **Configurable orb.** Choose its position and whether it remains visible briefly after speaking.
+- **Adjustable background audio.** Temporarily lower background audio while Prisma speaks, or disable ducking altogether.
 
-## Requisitos
+## Requirements
 
-- **macOS 15 o posterior.** El proyecto se compila como una app nativa con Swift.
-- **Herramientas de desarrollo de Apple** con Swift disponible, además de Git, Python 3 con soporte para `venv`, `curl` y `jq`. Por ejemplo, instala las herramientas de línea de comandos con `xcode-select --install` y `jq` con `brew install jq` si usas Homebrew.
-- Al menos uno de los agentes compatibles instalado: Codex, Claude Code u OpenCode.
-- Conexión a internet para instalar las dependencias, descargar el modelo de Piper y usar Edge Neural TTS. Piper y la voz de Apple pueden funcionar sin conexión una vez preparados.
+### macOS
 
-## Instalación
+- **macOS 15 or later.** Prisma builds as a native Swift app.
+- **Apple developer tools** with Swift, plus Git, Python 3 with `venv`, `curl`, and `jq`. For example, install the command line tools with `xcode-select --install` and `jq` with `brew install jq` if you use Homebrew.
+- At least one supported agent: Codex, Claude Code, or OpenCode.
+- Internet access to install dependencies, download the Piper model, and use Edge Neural TTS. Piper and the Apple voice can work offline once prepared.
 
-Clona el repositorio y ejecuta los dos scripts desde la carpeta del proyecto:
+### Windows
+
+- Windows 10 or 11, 64-bit Python 3.11 or 3.12 with Tkinter and the `py` launcher, PowerShell, and Git.
+- At least one supported agent installed natively on Windows.
+- Internet access to install dependencies, download Piper, and use Edge Neural TTS.
+
+## Installation
+
+### macOS
+
+Clone the repository and run both scripts from the project directory:
 
 ```bash
 git clone https://github.com/newton1057/Prisma.git ~/Desktop/Prisma
@@ -44,113 +54,129 @@ cd ~/Desktop/Prisma
 ./install.sh
 ```
 
-`setup_voice.sh` crea un entorno de Python, instala `piper-tts` y `edge-tts`, y descarga el modelo de voz de Piper (aproximadamente 60 MB). El modelo no está incluido en el repositorio.
+`setup_voice.sh` creates a Python environment, installs `piper-tts` and `edge-tts`, and downloads the Piper voice model (about 60 MB). The model is not included in the repository.
 
-`install.sh` compila y abre la app, la copia a `~/Applications/Prisma.app` y prepara los archivos de voz y configuración en `~/Library/Application Support/Prisma/`. También configura los hooks e instrucciones globales de Codex y, si los detecta, instala la integración de Claude Code y OpenCode. El instalador puede modificar la configuración existente de esos agentes; revisa [install.sh](install.sh) antes de ejecutarlo si quieres conocer los cambios. Sus comandos de instalación de plugins pueden fallar sin detener el script, así que conviene verificar cada integración.
+`install.sh` builds and opens the app, copies it to `~/Applications/Prisma.app`, and prepares voice and configuration files in `~/Library/Application Support/Prisma/`. It also configures Codex's global hooks and instructions and, when detected, installs the Claude Code and OpenCode integrations. The installer may modify existing agent configuration; review [install.sh](install.sh) for details. Some plugin commands can fail without stopping the script, so verify each integration afterward.
 
-> Si instalas un agente después de Prisma, vuelve a ejecutar `./install.sh` para configurar su integración. Reinicia el agente para que cargue los cambios.
+> If you install an agent after Prisma, run `./install.sh` again to configure it. Restart the agent to load the changes.
 
-### Comprueba que funciona
+To check the installation, select **Probar voz** (Test voice) from Prisma's menu bar icon, or run:
 
-1. Busca el icono de Prisma en la barra de menús de macOS y selecciona **Probar voz**. Deberías ver el orbe y escuchar un mensaje.
-2. También puedes probarlo desde la carpeta del repositorio:
+```bash
+./test.sh "Hello. Prisma is working on your Mac."
+```
 
-   ```bash
-   ./test.sh "Hola. Prisma está funcionando en tu Mac."
-   ```
+Then start or restart an agent and ask it to complete a short task. To check question notifications, ask it to use an interactive question tool.
 
-3. Inicia o reinicia tu agente, pídele una tarea breve y espera a que termine. Prisma debería anunciar el resultado. Para comprobar las preguntas, pide al agente que te haga una pregunta interactiva.
+### Windows
 
-## Cómo funciona
+In PowerShell, clone the repository and run the installer:
+
+```powershell
+git clone https://github.com/newton1057/Prisma.git
+cd Prisma
+powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\install.ps1
+```
+
+The installer prepares the environment and voices in `%LOCALAPPDATA%\Prisma`, creates a Start menu shortcut, configures hooks, and opens Prisma. Restart your agents; Codex may require you to approve its hooks. The orb appears on the primary display and the app is controlled from the system tray.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\test.ps1 -Text "Hello. Prisma is working on Windows."
+```
+
+See the [Windows guide](docs/windows.md) for requirements, settings, troubleshooting, and outstanding validation. **The Windows implementation still needs to be tested on a Windows machine.**
+
+## How it works
 
 ```text
 Codex / Claude Code / OpenCode
           │
-          │  respuesta final o pregunta
+          │  final response or question
           ▼
- Integración de Prisma
+ Prisma integration
           │
-          │  texto preparado para voz
+          │  text prepared for speech
           ▼
- App de Prisma en macOS ──► voz + orbe animado
+ Prisma on macOS or Windows ──► voice + animated orb
 ```
 
-Las integraciones piden al agente que incluya un bloque como este al final de sus respuestas:
+The integrations ask the agent to include a block like this at the end of its responses:
 
 ```xml
 <ForPrisma>
-Terminé los cambios y comprobé que funcionan correctamente.
+I finished the changes and checked that they work.
 </ForPrisma>
 ```
 
-Prisma intenta leer el último bloque válido e ignora las etiquetas mencionadas en ejemplos de código. Si el agente no lo incluye, recurre al texto disponible y elimina elementos como enlaces y formato Markdown; por eso el aviso puede ser más largo. En las preguntas interactivas, también puede construir el aviso con la pregunta y sus opciones.
+Prisma reads the last valid block and ignores tags mentioned in code examples. If the agent omits it, Prisma falls back to the available text and removes links and Markdown, so the notification may be longer. For interactive questions, it can also build an announcement from the question and its options.
 
-Los hooks de Codex y Claude Code y el plugin de OpenCode envían los avisos a un servidor de la app que escucha en `127.0.0.1`. Las peticiones para hablar y detenerse requieren un token local. La app usa el primer puerto disponible de su rango y registra el puerto activo en `runtime.json`.
+The Codex and Claude Code hooks and the OpenCode plugin send notifications to an app server listening on `127.0.0.1`. Speak and stop requests require a local token. The app uses the first available port in its range and records the active port in `runtime.json`.
 
-## Configuración
+## Settings
 
-Abre **Prisma → Ajustes…** desde el icono de la barra de menús. Allí puedes elegir:
+The current app interface uses Spanish labels. On macOS, open **Prisma → Ajustes…** (Settings) from the menu bar; on Windows, open **Ajustes** from the system tray. Options include:
 
-| Ajuste | Opciones |
+| Setting | Options |
 | --- | --- |
-| **Motor y voz** | Edge Neural TTS, Piper local o Apple; Edge ofrece voces multilingües y regionales. |
-| **Lectura** | Mensaje completo, resumen corto o solo un aviso. Estos modos se aplican al texto que recibe la app. |
-| **Velocidad** | De 0.8× a 1.2×. |
-| **Audio de fondo** | Activar o desactivar la atenuación y ajustar su intensidad. |
-| **Animación** | Posición del orbe y tiempo de permanencia al terminar. |
+| **Engine and voice** | Edge Neural TTS, local Piper, or the system voice. Edge offers multilingual and regional voices. |
+| **Reading mode** | Full message, short summary, or notice only. These modes apply to the text received by the app. |
+| **Speed** | 0.8× to 1.2×. |
+| **Background audio** | Enable or disable ducking and adjust its strength. |
+| **Animation** | Orb position and how long it stays visible afterward. |
 
-La atenuación está activada por defecto y afecta al **volumen global del dispositivo de salida**, incluidas llamadas y notificaciones. Por defecto lo reduce al 35 % de su nivel previo y lo restaura al terminar. Algunos dispositivos no permiten controlar el volumen desde macOS; en ese caso se omite la atenuación. Hay más detalles y limitaciones en [Audio de fondo](docs/audio-ducking.md).
+On macOS, ducking is enabled by default and affects the **output device's global volume**, including calls and notifications. By default, it lowers the volume to 35% of its previous level and restores it afterward. Devices whose volume cannot be controlled by macOS are skipped. See [Background audio](docs/audio-ducking.md) for details and limitations. Windows uses per-session ducking; see the [Windows guide](docs/windows.md).
 
-### Probar otras voces
+### Try other voices on macOS
 
 ```bash
-# Una voz de Edge Neural
-./test.sh "Hola, esta es Dalia." --voice dalia
-
-# Seleccionar un motor local
-./test.sh "Hola, estoy usando Piper." --engine piper
-./test.sh "Hola, estoy usando la voz de Apple." --engine apple
+./test.sh "Hello, this is Dalia." --voice dalia
+./test.sh "Hello, I am using Piper." --engine piper
+./test.sh "Hello, I am using the Apple voice." --engine apple
 ```
 
-Las voces de Edge disponibles incluyen `ava`, `andrew`, `emma`, `brian`, `dalia`, `jorge`, `salome`, `ximena`, `alvaro` y `elena`. También puedes seleccionarlas en Ajustes.
+Available Edge voices include `ava`, `andrew`, `emma`, `brian`, `dalia`, `jorge`, `salome`, `ximena`, `alvaro`, and `elena`. You can also select them in settings. The Piper model is a Spanish-language voice.
 
-## Privacidad y conexión
+## Privacy and connectivity
 
-La comunicación entre los plugins y la app ocurre en el Mac. **Edge Neural TTS utiliza un servicio en línea:** el texto preparado para el aviso se envía a ese servicio para generar audio. Si prefieres síntesis local, selecciona **Piper Local** o **Apple Paulina** en Ajustes. El instalador también descarga paquetes y el modelo de voz desde internet.
+Communication between the plugins and app stays on your computer. **Edge Neural TTS uses an online service:** the prepared notification text is sent to that service to generate audio. For local synthesis, select **Piper Local** or the system voice in settings. The installer also downloads packages and a voice model from the internet.
 
-## Solución de problemas
+## Troubleshooting
 
-**No veo ni escucho Prisma.** Abre `~/Applications/Prisma.app` y usa **Probar voz** en su menú. Revisa el volumen de salida y, en Ajustes, que el servidor local aparezca activo.
+For Windows, see the [Windows guide](docs/windows.md). The following tips apply to macOS.
 
-**La prueba de voz funciona, pero el agente no avisa.** Reinicia el agente y vuelve a ejecutar `./install.sh` si lo instalaste después de Prisma. Comprueba que la integración esté habilitada en ese agente; el instalador continúa aunque fallen algunos comandos de plugins. El registro del hook está en `~/Library/Application Support/Prisma/hook.log`.
+**I can't see or hear Prisma.** Open `~/Applications/Prisma.app` and select **Probar voz** (Test voice) from its menu. Check the output volume and confirm that the local server is active in settings.
 
-**Edge no habla o no tengo conexión.** Prueba Piper o Apple desde Ajustes. Si Piper aparece como no encontrado, ejecuta `./setup_voice.sh` seguido de `./install.sh` y comprueba de nuevo.
+**The voice test works, but the agent doesn't notify me.** Restart the agent and rerun `./install.sh` if you installed it after Prisma. Check that its integration is enabled; the installer continues even if some plugin commands fail. The hook log is at `~/Library/Application Support/Prisma/hook.log`.
 
-**El orbe aparece en otra pantalla.** En configuraciones con varios monitores, actualmente puede aparecer en la pantalla que macOS considera principal; la selección explícita de pantalla está pendiente. Puedes cambiar la posición del orbe en Ajustes.
+**Edge doesn't speak or I'm offline.** Try Piper or Apple in settings. If Piper cannot be found, run `./setup_voice.sh` followed by `./install.sh` and check again.
 
-**El volumen quedó bajo.** Prisma intenta restaurarlo al terminar y al cerrar normalmente. Si el proceso se cierra de forma forzada o falla, ajústalo manualmente desde macOS. Puedes desactivar la atenuación en Ajustes.
+**The orb appears on another screen.** On multi-monitor setups, it may appear on the screen macOS considers primary. Explicit display selection is not yet available; you can change the orb's position in settings.
 
-## Estructura del proyecto
+**The volume stayed low.** Prisma attempts to restore it after speaking and on normal exit. If the process is forcibly stopped or crashes, adjust the volume in macOS. You can disable ducking in settings.
+
+## Project structure
 
 ```text
-app/                 App nativa de macOS: interfaz, voz y servidor local
-plugin/              Integraciones, hooks y skill para los agentes
-docs/                Investigación, decisiones técnicas y roadmap
-samples/             Muestras de voces
-setup_voice.sh       Prepara las dependencias y el modelo de voz
-install.sh           Compila e instala Prisma y sus integraciones
-test.sh              Envía un aviso de prueba a la app
+app/                 Native macOS app: interface, voice, and local server
+windows/             Windows app, installer, and voice test scripts
+plugin/              Agent integrations, hooks, and skill
+docs/                Research, technical decisions, and roadmap
+samples/             Voice samples
+setup_voice.sh       Prepares voice dependencies and model
+install.sh           Builds and installs Prisma and its integrations
+test.sh              Sends a test notification to the app
 ```
 
-## Documentación
+## Documentation
 
-- [Audio de fondo](docs/audio-ducking.md): funcionamiento, pruebas y limitaciones de la atenuación.
-- [Roadmap](docs/roadmap.md): mejoras pendientes y decisiones de producto.
-- [Investigación](docs/investigacion.md): mecanismos de integración con los agentes.
-- [Comparativa de voces](docs/voces.md): pruebas y muestras de voces locales. Algunas notas reflejan decisiones anteriores; la voz predeterminada actual es Edge Ava Multilingüe.
+- [Windows guide](docs/windows.md): installation, configuration, compatibility, and validation.
+- [Background audio](docs/audio-ducking.md): macOS ducking behavior, tests, and limitations.
+- [Roadmap](docs/roadmap.md): planned improvements and product decisions.
+- [Research](docs/investigacion.md): agent integration mechanisms and macOS architecture.
+- [Voice comparison](docs/voces.md): local voice tests and samples. Some notes reflect earlier decisions; the current default is Edge Ava Multilingual.
 
 ---
 
 <div align="center">
-  Hecho para que puedas seguir trabajando mientras tus agentes trabajan contigo.
+  Made so you can keep working while your agents work with you.
 </div>

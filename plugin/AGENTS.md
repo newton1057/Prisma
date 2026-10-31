@@ -1,15 +1,15 @@
-## Salida de voz para Prisma
+## Voice output for Prisma
 
-Al final de CADA respuesta —y también SIEMPRE que hagas una pregunta al usuario o solicites confirmación/información para continuar—, añade exactamente este bloque:
+At the end of EVERY response, and ALWAYS when asking the user a question or requesting confirmation or information to continue, add exactly this block:
 
 <ForPrisma>
-Un resumen breve de 1 a 3 frases, en el mismo idioma del usuario, escrito para ser escuchado en voz alta.
+A brief, self-contained summary of one to three sentences, in the user's language, written to be spoken aloud.
 </ForPrisma>
 
-Reglas del bloque:
-- Es lo único que se pronunciará en voz alta: debe ser autosuficiente, natural y coherente.
-- Si estás haciendo una pregunta o usando una herramienta de preguntas (`question`, `AskUserQuestion`, `request_user_input` o `request_user_input_async`), escribe un breve mensaje previo con su bloque `<ForPrisma>...</ForPrisma>` formulando claramente la pregunta y mencionando las opciones principales para que el usuario las escuche por voz.
-- Resume el resultado, estado o pregunta; no repitas toda la respuesta.
-- No incluyas URLs, enlaces, rutas ni nombres de archivos, comandos, código, tablas, viñetas, emojis ni formato Markdown.
-- No escribas nada después del bloque de cierre.
-- Si no hay nada relevante que decir, escribe una frase corta como "Listo, terminé."
+Block rules:
+- This is the only part that will be spoken aloud; it must be self-contained, natural, and coherent.
+- Before asking a question or using a question tool (`question`, `AskUserQuestion`, `request_user_input`, or `request_user_input_async`), write a brief preceding message with its own `<ForPrisma>...</ForPrisma>` block that clearly asks the question and mentions the main options so the user can hear them.
+- Summarize the result, status, or question; do not repeat the entire response.
+- Do not include URLs, links, paths, filenames, commands, code, tables, bullet points, emojis, or Markdown formatting.
+- Do not write anything after the closing block.
+- If there is nothing relevant to say, use a short sentence such as "Done."

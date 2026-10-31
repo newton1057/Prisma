@@ -195,17 +195,18 @@ function triggerOnStop(payload: {
   cwd: string
   last_assistant_message: string
 }) {
-  const scriptPath = join(
-    homedir(),
-    "Library",
-    "Application Support",
-    "Prisma",
-    "on_stop.sh",
-  )
+  const isWindows = process.platform === "win32"
+  const support = isWindows
+    ? join(process.env.LOCALAPPDATA || homedir(), "Prisma")
+    : join(homedir(), "Library", "Application Support", "Prisma")
+  const scriptPath = join(support, isWindows ? "hook.py" : "on_stop.sh")
+  const executable = isWindows ? join(support, "venv", "Scripts", "python.exe") : "bash"
 
-  const child = spawn("bash", [scriptPath], {
+  const child = spawn(executable, [scriptPath], {
     stdio: ["pipe", "ignore", "ignore"],
+    windowsHide: true,
   })
+  child.on("error", () => {})
 
   child.stdin.write(
     JSON.stringify({

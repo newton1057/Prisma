@@ -1,29 +1,28 @@
-# Investigación: plugin Prisma (Codex, Claude Code y OpenCode) + overlay tipo Siri AI iOS 27
+# Research: Prisma integrations and the macOS overlay
 
-Fecha: 2026-10-29
-Equipo: macOS 26.4, Apple Silicon, 16 GB RAM
+Date: 2026-10-29
+Test machine: macOS 26.4, Apple Silicon, 16 GB RAM
 Codex CLI: 0.165.0
 
-## 1. Engancharse al final de un turno
+These are historical research notes. For the current Windows implementation, see the [Windows guide](windows.md).
 
-### 1.1 `notify` (config.toml)
+## 1. Detecting the end of a turn
 
-`~/.codex/config.toml` acepta:
+### 1.1 `notify` in `config.toml`
+
+`~/.codex/config.toml` accepts a command such as:
 
 ```toml
-notify = ["python3", "/ruta/notify.py"]
+notify = ["python3", "/path/to/notify.py"]
 ```
 
-Codex ejecuta ese programa cuando emite `agent-turn-complete` y le pasa un JSON
-con `last-assistant-message`, `thread-id`, `turn-id`, `cwd` e `input-messages`.
+Codex runs it on `agent-turn-complete`, passing JSON with `last-assistant-message`, `thread-id`, `turn-id`, `cwd`, and `input-messages`.
 
-Ventaja: simple. Desventaja: **solo admite un comando**. En este equipo ya está
-ocupado por Codex Computer Use (`SkyComputerUseClient turn-ended`), así que
-reemplazarlo rompería esa integración. Se descartó.
+This approach is simple but supports **only one command**. On the test machine it was already used by Codex Computer Use (`SkyComputerUseClient turn-ended`), so replacing it would break that integration. It was not adopted.
 
-### 1.2 Hook `Stop` de usuario (solución adoptada)
+### 1.2 User-level `Stop` hook
 
-`~/.codex/hooks.json`:
+The adopted approach uses `~/.codex/hooks.json`:
 
 ```json
 {
@@ -33,7 +32,7 @@ reemplazarlo rompería esa integración. Se descartó.
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"/Users/newton1057/Library/Application Support/Prisma/on_stop.sh\"",
+            "command": "bash \"/Users/example/Library/Application Support/Prisma/on_stop.sh\"",
             "timeout": 10,
             "statusMessage": "Prisma"
           }
@@ -44,43 +43,30 @@ reemplazarlo rompería esa integración. Se descartó.
 }
 ```
 
-El evento `Stop` se dispara al terminar el turno principal y recibe:
+The event fires at the end of the main turn and receives data such as:
 
 ```json
 {
   "session_id": "thr_...",
   "turn_id": "...",
-  "cwd": "/ruta/del/proyecto",
+  "cwd": "/path/to/project",
   "hook_event_name": "Stop",
   "stop_hook_active": false,
-  "last_assistant_message": "Texto final del asistente..."
+  "last_assistant_message": "Final assistant response..."
 }
 ```
 
-El script `on_stop.sh` lee el JSON, extrae `last_assistant_message` (o lee `transcript_path` en Claude Code) y hace un
-`POST` a la app local. Es síncrono y tarda milisegundos si la app ya está
-abierta. Si no lo está, la lanza y espera hasta 5 s.
+`on_stop.sh` reads the JSON, extracts `last_assistant_message` or reads `transcript_path` for Claude Code, and posts to the local app. It normally takes milliseconds if the app is already open; otherwise it launches the app and waits up to five seconds.
 
-### 1.3 Hallazgo: los hooks del plugin no se ejecutaron en `codex exec`
+### 1.3 Finding: plugin hooks did not run in `codex exec`
 
-Se empaquetó el plugin `prisma` con `hooks/hooks.json` y se instaló con
-`codex plugin add`. El plugin aparece como `installed, enabled`, pero durante
-`codex exec` **no se ejecutó su hook `Stop`**, ni siquiera con
-`--dangerously-bypass-hook-trust`. Un hook equivalente en
-`~/.codex/hooks.json` sí se ejecutó (`hook: Stop Completed`).
+The `prisma` plugin was packaged with `hooks/hooks.json` and installed with `codex plugin add`. It appeared as installed and enabled, but its `Stop` hook did not run during `codex exec`, even with `--dangerously-bypass-hook-trust`. An equivalent user hook in `~/.codex/hooks.json` did run (`hook: Stop Completed`).
 
-Conclusión: en Codex CLI 0.165.0 el mecanismo fiable es el hook de usuario.
-El plugin se conserva para:
-- la skill `prisma`;
-- la app de escritorio de Codex y Claude Code, donde los hooks de plugin sí están soportados;
-- la distribución del paquete.
+For Codex CLI 0.165.0, the user hook was therefore the reliable mechanism. The plugin remains useful for the Prisma skill, desktop Codex and Claude Code plugin support, and package distribution. The app deduplicates requests with the same `session_id` and text within two seconds, avoiding duplicate speech if both hooks run.
 
-La app deduplica peticiones con el mismo `session_id` y texto en una ventana de
-2 s, así que si ambos hooks llegaran a ejecutarse no hablaría dos veces.
+### 1.4 Plugin layout
 
-### 1.4 Estructura del plugin Prisma
-
-```
+```text
 plugin/
 ├── plugin.json
 ├── .codex-plugin/plugin.json
@@ -91,8 +77,7 @@ plugin/
 └── skills/prisma/SKILL.md
 ```
 
-Se expone con marketplaces locales en
-`~/Desktop/Prisma/.agents/plugins/marketplace.json` y `~/Desktop/Prisma/.claude-plugin/marketplace.json`, y se instala con:
+Local marketplaces are exposed in `~/Desktop/Prisma/.agents/plugins/marketplace.json` and `~/Desktop/Prisma/.claude-plugin/marketplace.json`. Installation commands:
 
 ```bash
 codex plugin marketplace add ~/Desktop/Prisma
@@ -101,74 +86,38 @@ claude plugin marketplace add ~/Desktop/Prisma
 claude plugin install prisma@prisma-local
 ```
 
-Los hooks no gestionados hay que confiarlos una vez con `/hooks`.
+Unmanaged hooks must be trusted through `/hooks`.
 
-## 2. Overlay flotante sobre Chrome/YouTube en pantalla completa
+## 2. Floating macOS overlay
 
-Un plugin no puede dibujar sobre otras apps: el overlay es una app nativa aparte.
-
-La pieza clave es un `NSPanel` de AppKit con:
+A plugin cannot draw over other applications, so the overlay is a separate native app. Its AppKit `NSPanel` uses:
 
 - `styleMask = [.borderless, .nonactivatingPanel]`
-- `isOpaque = false`, `backgroundColor = .clear`
-- `level = .screenSaver` (por encima de casi todo)
+- `isOpaque = false` and `backgroundColor = .clear`
+- `level = .screenSaver`
 - `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]`
-- `orderFrontRegardless()` para no robar el foco
-- `ignoresMouseEvents = true` para que los clics atraviesen el orbe
+- `orderFrontRegardless()` to avoid taking focus
+- `ignoresMouseEvents = true` so clicks pass through
 
-`.fullScreenAuxiliary` permite que la ventana acompañe a un espacio en pantalla
-completa, que es el caso de YouTube en Chrome. El panel no activa la app, así
-que el vídeo sigue reproduciéndose y el teclado sigue en Chrome.
+`.fullScreenAuxiliary` allows the window to join a full-screen space, such as Chrome playing a YouTube video. The panel does not activate the app, so video and keyboard focus remain in Chrome.
 
-La animación usa SwiftUI:
+The SwiftUI animation uses a liquid-glass lens with a curved prismatic horizon, blur and `blendMode(.plusLighter)` layers, audio-reactive waves, and a 60 fps `TimelineView(.animation)`. It slides down from the top edge below the notch. The app lives in the menu bar using `NSStatusItem` and can be launched by the hook.
 
-- Lente de cristal líquido (`Liquid Glass`) con horizonte prismático curvado.
-- Capas con `blur`, `blendMode(.plusLighter)` y ondas reactivas a la voz.
-- `TimelineView(.animation)` a 60 fps.
-- Se desliza desde el borde superior debajo del Notch.
+## 3. macOS architecture
 
-La app vive en la barra de menús (`NSStatusItem`) y se abre sola desde el hook.
+1. **Prisma.app** (SwiftUI + AppKit): authenticated HTTP server on `127.0.0.1`; floating `NSPanel`; Edge Neural TTS and local Piper with chunking and streaming playback; `AVSpeechSynthesizer` fallback; settings for voice, reading mode, speed, and position.
+2. **Hooks and plugins:** Codex uses `~/.codex/hooks.json` and `prisma@prisma-local`; Claude Code uses the local plugin and transcript; OpenCode uses `~/.config/opencode/plugins/prisma.ts` and its Prisma skill. Hooks send `POST /speak` to the app.
+3. **`install.sh`:** builds and installs `Prisma.app` in `~/Applications`, copies Piper and `edge-tts` to Application Support, and installs hooks and plugins.
 
-## 3. Arquitectura final
+## 4. Voice findings
 
-1. **Prisma.app** (SwiftUI + AppKit):
-   - Servidor HTTP local en `127.0.0.1` con token.
-   - Overlay `NSPanel` arriba al centro (debajo del Notch).
-   - Edge Neural TTS (`en-US-AvaMultilingualNeural`) y Piper local con chunking y reproducción en streaming.
-   - Fallback a `AVSpeechSynthesizer` (Apple Paulina).
-   - Ajustes: motor, lectura, velocidad, posición.
+Piper `es_MX-claude-high` synthesized 4.78 seconds of audio in 1.18 seconds, including startup, without a GPU or network. Piper was originally selected as the primary voice, with Apple Paulina as a fallback. Edge Ava Multilingual is now the default. See the [voice comparison](voces.md).
 
-2. **Hooks y Plugins (Codex, Claude Code y OpenCode)**:
-   - Codex: `~/.codex/hooks.json` + `prisma@prisma-local` → `on_stop.sh` → `POST /speak`.
-   - Claude Code: `prisma@prisma-local` → `on_stop.sh` (leyendo `transcript_path`) → `POST /speak`.
-   - OpenCode: `~/.config/opencode/plugins/prisma.ts` + `~/.config/opencode/skills/prisma/SKILL.md`.
+## 5. Sources
 
-3. **Instalador (`install.sh`)**:
-   - Compila `Prisma.app` y la instala en `~/Applications/Prisma.app`.
-   - Copia Piper y `edge-tts` a `~/Library/Application Support/Prisma/`.
-   - Instala el hook y los plugins en Codex, Claude Code y OpenCode.
-
-## 4. Voz
-
-Se verificaron las voces del sistema y Piper. Piper
-`es_MX-claude-high` sintetizó 4,78 s de audio en 1,18 s (incluyendo arranque),
-sin GPU y sin red. Es la voz principal. Apple Paulina queda como fallback.
-
-Ver `docs/voces.md` para la comparativa completa.
-
-## 5. Fuentes
-
-- Config avanzada de Codex (`notify`):
-  https://learn.chatgpt.com/docs/config-file/config-advanced
-- Hooks de Codex:
-  https://developers.openai.com/codex/hooks
-- Plugins de Codex:
-  https://developers.openai.com/plugins/build/plugins
-- Piper:
-  https://github.com/rhasspy/piper
-- Voces Piper:
-  https://huggingface.co/rhasspy/piper-voices
-- Kokoro 82M:
-  https://huggingface.co/hexgrad/Kokoro-82M
-- Supertonic 3:
-  https://huggingface.co/Supertone/supertonic-3
+- [Codex advanced configuration](https://learn.chatgpt.com/docs/config-file/config-advanced)
+- [Codex hooks](https://developers.openai.com/codex/hooks)
+- [Codex plugins](https://developers.openai.com/plugins/build/plugins)
+- [Piper](https://github.com/rhasspy/piper) and [Piper voices](https://huggingface.co/rhasspy/piper-voices)
+- [Kokoro 82M](https://huggingface.co/hexgrad/Kokoro-82M)
+- [Supertonic 3](https://huggingface.co/Supertone/supertonic-3)

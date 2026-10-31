@@ -18,3 +18,7 @@ voices/piper/*.onnx.json
 # Logs and temp files
 *.log
 tmp/
+
+# Python bytecode
+__pycache__/
+*.py[cod]

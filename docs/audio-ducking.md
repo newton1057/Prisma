@@ -1,200 +1,163 @@
-# Atenuación del audio de fondo (ducking)
+# Background audio ducking on macOS
 
-Fecha: 2026-10-30
-Estado: implementado y verificado en macOS 26.4 (Apple Silicon)
-Commit: `f1366c9` — *Atenúa el audio del sistema mientras Prisma habla*
+Date: 2026-10-30
+Status: implemented and verified on macOS 26.4 (Apple Silicon)
+Original commit: `f1366c9`
 
-## 1. Qué hace
+This document describes macOS. Windows uses per-session attenuation; see the [Windows guide](windows.md).
 
-Cuando Prisma empieza a hablar:
+## 1. Behavior
 
-1. Baja suavemente el volumen del dispositivo de salida del Mac (35% por
-   defecto) para que la música, un video o una llamada queden de fondo.
-2. Compensa su propia voz con ganancia y un limitador de picos, para que se
-   entienda claramente por encima del audio atenuado.
-3. Al terminar, restaura el volumen anterior con una rampa corta.
+When Prisma starts speaking, it:
 
-Se puede desactivar o ajustar en **Ajustes → Audio de fondo**:
+1. Smoothly lowers the Mac's output device volume to 35% by default, putting music, video, or calls in the background.
+2. Compensates its own voice with gain and a peak limiter so it remains audible over the background.
+3. Restores the previous volume with a short ramp when speech ends.
 
-- *Bajar música y videos mientras Prisma habla* (activado por defecto).
-- *Volumen mientras hablo*: 15%–70%, en pasos de 5% (35% por defecto).
+The Spanish-language interface offers these options under **Ajustes → Audio de fondo** (Settings → Background audio):
 
-## 2. Por qué se implementó así
+- Lower music and videos while Prisma speaks (enabled by default).
+- Volume while speaking: 15%–70%, in 5% increments (35% by default).
 
-macOS no ofrece una API pública para atenuar **una sola aplicación**. Las
-alternativas viables eran:
+## 2. Design
 
-| Opción | Resultado |
+The available approaches were:
+
+| Option | Outcome |
 |---|---|
-| Bajar el volumen del dispositivo de salida (CoreAudio) | Simple, funciona con cualquier app y reproductor. Afecta a todo el sistema. **Elegida.** |
-| Capturar y remezclar el audio de otras apps (CoreAudio taps, macOS 14.4+) | Requiere permisos de captura de audio y un grafo por proceso. Se deja como mejora futura. |
-| Silenciar apps concretas con APIs privadas | Frágil y no distribuible. Descartada. |
+| Lower the output device volume using CoreAudio | Simple and works with apps and players, but affects the entire system. **Selected.** |
+| Capture and remix other apps' audio using CoreAudio taps (macOS 14.4+) | Requires audio capture permission and a graph per process; left for future investigation. |
+| Mute individual apps through private APIs | Fragile and unsuitable for distribution; rejected. |
 
-Como el volumen global también baja la voz de Prisma, la voz se compensa:
+Because lowering the global volume also lowers Prisma's voice, the app compensates it:
 
 ```text
-compensación (dB) = 20 · log10(volumen_base / volumen_atenuado)
+compensation (dB) = 20 · log10(base_volume / ducked_volume)
 ```
 
-con un tope de **+12 dB** para no forzar el motor ni el limitador. La ganancia
-se aplica antes de un `PeakLimiter` de Apple, de modo que la voz sube sin
-distorsionar.
+Compensation is capped at **+12 dB** to avoid overdriving the engine or limiter. Gain is applied before Apple's `PeakLimiter` so the voice can be raised without distortion. `SpeechSession` uses `AVAudioEngine` and `AVAudioUnitEffect` (PeakLimiter) instead of `AVAudioPlayer`, which cannot provide the required positive gain and peak limiting.
 
-También se sustituyó `AVAudioPlayer` por `AVAudioEngine` +
-`AVAudioUnitEffect` (PeakLimiter) en `SpeechSession`. `AVAudioPlayer` no permite
-aplicar ganancia positiva ni limitar picos, así que no servía para compensar.
-
-## 3. Flujo completo
+## 3. Flow
 
 ```text
 POST /speak
    │
-   ├─ Se sintetiza el primer fragmento (Edge / Piper)
+   ├─ Synthesize first chunk (Edge / Piper)
    │
-   ├─ SpeechSession, justo antes del primer play:
+   ├─ SpeechSession, just before first playback:
    │     duckBoost()  ──►  SpeechController.startDuckingForVoice()
-   │                          ├─ ¿duckAudio activo?  no → restaura y devuelve 0
+   │                          ├─ duckAudio disabled? → restore and return 0
    │                          └─ SystemAudioDucker.duck(to: duckLevel)
-   │                                ├─ lee volumen actual del dispositivo por defecto
-   │                                ├─ calcula objetivo y compensación
-   │                                ├─ rampa de bajada (0.35 s)
-   │                                └─ programa watchdog de 10 min
+   │                                ├─ read default output device volume
+   │                                ├─ calculate target and compensation
+   │                                ├─ ramp down (0.35 s)
+   │                                └─ schedule 10-minute watchdog
    │
-   ├─ pre-roll de 0.32 s (solo si hay compensación)
-   │     └─ da tiempo a que la música baje antes de la primera palabra
+   ├─ 0.32-second pre-roll when compensation is active
    │
-   ├─ Reproducción con AVAudioEngine
-   │     └─ preGain (+dB) → PeakLimiter → mainMixer → salida
+   ├─ AVAudioEngine playback
+   │     └─ preGain (+dB) → PeakLimiter → mainMixer → output
    │
-   ├─ Cada fragmento: keepAlive() refresca el watchdog
+   ├─ Each chunk: keepAlive() refreshes the watchdog
    │
-   └─ Fin, /stop, cierre normal o SIGTERM
+   └─ Finish, /stop, normal exit, or SIGTERM
          └─ restore() / restoreImmediately()
-               └─ rampa de subida (0.5 s) al volumen anterior
+               └─ ramp up to previous volume (0.5 s)
 ```
 
-## 4. Componentes
+## 4. Components
 
-| Archivo | Responsabilidad |
+| File | Responsibility |
 |---|---|
-| `app/Sources/Prisma/SystemAudioDucker.swift` | Lee y escribe el volumen del dispositivo por CoreAudio, calcula la compensación, hace las rampas, respeta cambios manuales del usuario y ejecuta el watchdog. |
-| `app/Sources/Prisma/SpeechController.swift` | Decide cuándo atenuar (justo antes del primer play), aplica el pre-roll, pasa la ganancia al limitador y restaura en `finish`, `stop` y `shutdown`. |
-| `app/Sources/Prisma/SettingsStore.swift` | Persiste `duckAudio` (Bool, por defecto `true`) y `duckLevel` (Double, por defecto `0.35`). |
-| `app/Sources/Prisma/SettingsView.swift` | Sección **Audio de fondo** con interruptor, deslizador y texto explicativo. |
-| `app/Sources/Prisma/AppDelegate.swift` | `applicationWillTerminate` y handler de `SIGTERM` llaman a `SpeechController.shutdown()` para restaurar el volumen. |
+| `app/Sources/Prisma/SystemAudioDucker.swift` | Reads and writes device volume via CoreAudio, calculates compensation, ramps, respects manual changes, and runs the watchdog. |
+| `app/Sources/Prisma/SpeechController.swift` | Starts ducking before playback, applies pre-roll, passes gain to the limiter, and restores on finish, stop, and shutdown. |
+| `app/Sources/Prisma/SettingsStore.swift` | Persists `duckAudio` (Bool, default `true`) and `duckLevel` (Double, default `0.35`). |
+| `app/Sources/Prisma/SettingsView.swift` | Provides the background-audio toggle, slider, and explanatory text. |
+| `app/Sources/Prisma/AppDelegate.swift` | Calls `SpeechController.shutdown()` on application termination and `SIGTERM`. |
 
-## 5. Parámetros y valores
+## 5. Parameters
 
-| Parámetro | Valor | Dónde |
+| Parameter | Value | Location |
 |---|---|---|
-| Nivel de atenuación por defecto | 35% | `SettingsStore` |
-| Rango del ajuste | 15%–70%, paso 5% | `SettingsView` |
-| Límite interno del factor | 10%–85% | `SystemAudioDucker.duck` |
-| Volumen mínimo para atenuar | > 0.02 | `SystemAudioDucker.duck` |
-| Compensación máxima | +12 dB | `SystemAudioDucker` y `applyLimiterGain` |
-| Rampa de bajada | 0.35 s | `SystemAudioDucker` |
-| Rampa de subida | 0.5 s | `SystemAudioDucker` |
-| Pre-roll antes de la primera palabra | 0.32 s | `SpeechController` |
-| Watchdog de seguridad | 600 s, refrescado por fragmento | `SystemAudioDucker` |
-| Ducking con voz Apple (fallback) | `max(0.65, duckLevel)` | `SpeechController.speakWithApple` |
+| Default ducking level | 35% | `SettingsStore` |
+| Setting range | 15%–70%, 5% steps | `SettingsView` |
+| Internal factor limit | 10%–85% | `SystemAudioDucker.duck` |
+| Minimum volume for ducking | > 0.02 | `SystemAudioDucker.duck` |
+| Maximum compensation | +12 dB | `SystemAudioDucker` and `applyLimiterGain` |
+| Ramp down | 0.35 s | `SystemAudioDucker` |
+| Ramp up | 0.5 s | `SystemAudioDucker` |
+| Pre-roll before first word | 0.32 s | `SpeechController` |
+| Safety watchdog | 600 s, refreshed per chunk | `SystemAudioDucker` |
+| Apple fallback ducking | `max(0.65, duckLevel)` | `SpeechController.speakWithApple` |
 
-La voz Apple usa un ducking más suave porque `AVSpeechSynthesizer` no se puede
-compensar con ganancia; atenuar demasiado dejaría la voz de respaldo casi
-inaudible.
+The Apple voice uses gentler ducking because `AVSpeechSynthesizer` cannot receive gain compensation; otherwise the fallback could become hard to hear.
 
-## 6. Casos límite contemplados
+## 6. Edge cases
 
-- **Volumen ya muy bajo o silenciado**: si el volumen actual es ≤ 0.02, no se
-  atenúa ni se compensa.
-- **Dispositivo sin control de volumen** (algunos HDMI, agregados o virtuales):
-  `AudioObjectIsPropertySettable` devuelve falso y el ducking se omite sin
-  errores.
-- **El usuario cambia el volumen mientras Prisma habla**: al restaurar se
-  respeta su ajuste en lugar de imponer el volumen anterior.
-- **Doble atenuación** (por ejemplo, dos mensajes seguidos): se conserva el
-  volumen base original y no se acumulan factores.
-- **`/stop`**: restaura de inmediato con rampa.
-- **Cierre normal de la app**: `applicationWillTerminate` restaura.
-- **`SIGTERM`** (lo usa `install.sh` con `pkill`): handler dedicado que restaura
-  antes de salir.
-- **Mensaje largo**: el watchdog se refresca en cada fragmento para no cortar
-  el volumen a mitad de una frase.
-- **Fallo de reproducción**: `finish()` restaura aunque el audio no haya
-  llegado a sonar.
+- **Very low or muted volume:** if the current level is ≤ 0.02, ducking and compensation are skipped.
+- **Device without volume control:** for some HDMI, aggregate, or virtual devices, `AudioObjectIsPropertySettable` returns false and ducking is skipped.
+- **Manual volume change during speech:** restoration respects the user's adjustment instead of forcing the previous level.
+- **Repeated ducking:** the original base volume is retained and factors do not accumulate.
+- **`/stop`:** initiates immediate restoration with a ramp.
+- **Normal app exit:** `applicationWillTerminate` restores the volume.
+- **`SIGTERM`:** a dedicated handler restores the volume before exit; `install.sh` uses this signal with `pkill`.
+- **Long messages:** each chunk refreshes the watchdog so it does not restore volume mid-sentence.
+- **Playback failure:** `finish()` restores the volume even if playback never starts.
 
-## 7. Cómo probarlo
+## 7. Manual verification
 
-Preparación: pon música o un video en el Mac y ejecuta:
+Play music or video on the Mac and run:
 
 ```bash
-~/Desktop/Prisma/test.sh "Esto es una prueba de atenuación de audio mientras Prisma habla."
+~/Desktop/Prisma/test.sh "This is a background audio ducking test while Prisma speaks."
 ```
 
-Resultado esperado:
+Expected: background audio drops before the first word, the voice remains clear, and volume smoothly returns to its previous level after speech.
 
-1. La música baja antes de la primera palabra.
-2. La voz se escucha clara y por encima del fondo.
-3. Al terminar, el volumen vuelve suavemente al nivel anterior.
-
-Pruebas de restauración:
+Restoration checks:
 
 ```bash
-# Restauración con /stop
+# Restore with /stop; use the port reported in runtime.json.
 curl -sS -X POST "http://127.0.0.1:8788/stop" -H "X-Prisma-Token: $(jq -r .token "$HOME/Library/Application Support/Prisma/runtime.json")"
 
-# Cierre normal
+# Normal exit
 osascript -e 'quit app "Prisma"'
 
-# SIGTERM (lo usa install.sh)
+# SIGTERM, as used by install.sh
 pkill -TERM -f "Prisma.app/Contents/MacOS/Prisma"
 ```
 
-Para observar el volumen del dispositivo durante la prueba se puede usar
-`osascript -e 'output volume of (get volume settings)'` en bucle, o el medidor
-CoreAudio que se usó durante el desarrollo.
+To observe device volume during the test, repeatedly run `osascript -e 'output volume of (get volume settings)'` or use a CoreAudio meter.
 
-### Evidencia de la sesión de verificación
+### Verification evidence
 
-| Prueba | Resultado |
+| Test | Result |
 |---|---|
-| Volumen base 1.0 | 1.0 → 0.35 → 1.0 |
-| Volumen base 0.5 | 0.5 → 0.175 → 0.5 |
-| `/stop` durante el habla | Volumen restaurado |
-| Cierre normal de la app | Volumen restaurado |
-| `SIGTERM` | Volumen restaurado |
-| Ajuste desactivado | El volumen no cambia |
-| Compensación de voz (+9 dB) | RMS −20.2 → −13.2 dBFS; pico limitado a 0.0 dBFS |
-| Orbe durante el habla | Visible, sin recortes, con animación alimentada por el tap RMS |
+| Base volume 1.0 | 1.0 → 0.35 → 1.0 |
+| Base volume 0.5 | 0.5 → 0.175 → 0.5 |
+| `/stop` during speech | Volume restored |
+| Normal app exit | Volume restored |
+| `SIGTERM` | Volume restored |
+| Setting disabled | Volume unchanged |
+| Voice compensation (+9 dB) | RMS −20.2 → −13.2 dBFS; peak limited to 0.0 dBFS |
+| Orb while speaking | Visible, unclipped, with animation driven by the RMS tap |
 
-## 8. Limitaciones conocidas
+## 8. Known limitations
 
-- **Es global**: también baja notificaciones, alarmas y llamadas, no solo la
-  música. Es el precio de no usar APIs privadas.
-- **Solo el dispositivo de salida por defecto**: si el usuario cambia de salida
-  a mitad de una frase, el dispositivo nuevo no queda atenuado y la
-  restauración se aplica al dispositivo original.
-- **`SIGKILL` o cuelgue del proceso**: no hay oportunidad de restaurar; el
-  watchdog de 10 minutos solo corre mientras el proceso vive.
-- **La voz Apple no se compensa**: el ducking se limita al 65% como mínimo.
-- **No hay tests automatizados** de la lógica de rampas y restauración; la
-  verificación es manual (ver sección 7).
+- **Global effect:** notifications, alarms, and calls are attenuated as well as music.
+- **Default output device only:** changing devices mid-sentence does not duck the new device; restoration targets the original device.
+- **`SIGKILL` or a process crash:** there is no opportunity to restore; the 10-minute watchdog runs only while the process is alive.
+- **Apple voice has no gain compensation:** its minimum ducking level is 65%.
+- **No automated ramp or restoration tests:** verification is manual, as described above.
 
-## 9. Mejoras futuras
+## 9. Future improvements
 
-1. **Ducking por aplicación**: evaluar CoreAudio process taps (macOS 14.4+)
-   para atenuar solo apps de contenido y dejar intactas notificaciones y
-   llamadas. Requiere permisos de captura de audio y un grafo de mezcla.
-2. **Restauración tras cambio de dispositivo**: observar
-   `kAudioHardwarePropertyDefaultOutputDevice` y trasladar el ducking.
-3. **Tests unitarios** para `restoreTarget` (rampa en curso, cambio manual,
-   doble ducking) y una prueba de integración con un tono de referencia.
-4. **Sensibilidad del medidor del orbe**: exponer un ajuste si el RMS resulta
-   demasiado conservador con voces suaves.
-5. **Rampas configurables** para usuarios que prefieran transiciones más lentas.
+1. Evaluate per-app CoreAudio process taps (macOS 14.4+) to attenuate content apps while leaving notifications and calls alone; this requires capture permission and a mixing graph.
+2. Observe `kAudioHardwarePropertyDefaultOutputDevice` and transfer ducking when the output changes.
+3. Add unit tests for `restoreTarget` and an integration test with a reference tone.
+4. Expose orb meter sensitivity if RMS proves too conservative for quiet voices.
+5. Make ramp durations configurable for users who prefer slower transitions.
 
-## 10. Historial
+## 10. History
 
-- **2026-10-30** — Implementación inicial: `SystemAudioDucker`, integración con
-  `AVAudioEngine` y PeakLimiter, pre-roll, ajustes de usuario, watchdog,
-  restauración en `/stop`, cierre y `SIGTERM`. Verificado manualmente y
-  publicado en `main` (`f1366c9`).
+**2026-10-30:** initial implementation of `SystemAudioDucker`, `AVAudioEngine` and PeakLimiter integration, pre-roll, user settings, watchdog, and restoration on `/stop`, exit, and `SIGTERM`. Manually verified and published on `main` in `f1366c9`.
