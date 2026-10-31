@@ -20,7 +20,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 EVENT="$(printf '%s' "$INPUT" | jq -r '.hook_event_name // "Stop"' 2>/dev/null)"
-if [ -n "$EVENT" ] && [ "$EVENT" != "Stop" ]; then
+if [ -n "$EVENT" ] && [ "$EVENT" != "Stop" ] && [ "$EVENT" != "PreToolUse" ]; then
   echo '{}'
   exit 0
 fi
@@ -28,6 +28,45 @@ fi
 # 1. Intentar leer last_assistant_message directo (Codex, OpenCode y versiones nuevas de Claude Code)
 MESSAGE="$(printf '%s' "$INPUT" | jq -r '.last_assistant_message // empty' 2>/dev/null)"
 SOURCE="$(printf '%s' "$INPUT" | jq -r '.source // "codex"' 2>/dev/null)"
+
+# 1b. Si es PreToolUse de una herramienta de preguntas (AskUserQuestion / request_user_input / question)
+if [ "$EVENT" = "PreToolUse" ]; then
+  TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)"
+  case "$TOOL_NAME" in
+    AskUserQuestion|request_user_input|question)
+      TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)"
+      if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+        SOURCE="claude-code"
+        RECENT_TEXT="$(grep '"role":"assistant"' "$TRANSCRIPT_PATH" 2>/dev/null | tail -n 20 | jq -rs '
+          map(.message.content[]? | select(.type == "text") | .text) | map(select(length > 0)) | last // empty
+        ' 2>/dev/null || true)"
+        if printf '%s' "$RECENT_TEXT" | grep -qiE '<\s*ForPri(s)?ma\s*>'; then
+          MESSAGE="$RECENT_TEXT"
+        fi
+      fi
+      if [ -z "$MESSAGE" ] || [ "$MESSAGE" = "null" ]; then
+        MESSAGE="$(printf '%s' "$INPUT" | jq -r '
+          (.tool_input.questions // [])
+          | map(
+              (.question // "") as $q
+              | ((.options // []) | map(.label // "" | sub("\\s*\\(Recommended\\)\\s*"; "")) | map(select(length > 0))) as $opts
+              | if ($opts | length) > 0 then
+                  "\($q) Opciones: \($opts | join(", "))."
+                else
+                  $q
+                end
+            )
+          | map(select(length > 0))
+          | join(" ")
+        ' 2>/dev/null || true)"
+      fi
+      ;;
+    *)
+      echo '{}'
+      exit 0
+      ;;
+  esac
+fi
 
 # 2. Si viene vacío, extraer el último mensaje de assistant desde transcript_path (Claude Code JSONL)
 if [ -z "$MESSAGE" ] || [ "$MESSAGE" = "null" ]; then
@@ -53,6 +92,65 @@ if [ -z "$MESSAGE" ] || [ "$MESSAGE" = "null" ]; then
   log "Stop recibido sin texto de asistente."
   echo '{}'
   exit 0
+fi
+
+# 3. Si la respuesta incluye un bloque <ForPrisma>...</ForPrisma> (o <ForPrima> / "For Prisma:"),
+#    extraer solo ese bloque y limpiarlo de URLs, rutas y Markdown para voz.
+EXTRACTED_FOR_PRISMA="$(printf '%s' "$MESSAGE" | perl -CS -0777 -ne '
+  my $text = $_;
+  $text =~ s/\r\n/\n/g;
+  my $chosen = "";
+
+  my $without_code = $text;
+  $without_code =~ s/```[\s\S]*?```/ /g;
+  $without_code =~ s/~~~[\s\S]*?~~~/ /g;
+  $without_code =~ s/`[^`\n]*`/ /g;
+
+  if ($without_code =~ /[\s\S]*<[ \t]*ForPri(?:s)?ma[ \t]*>([\s\S]*?)(?:<[ \t]*\/[ \t]*ForPri(?:s)?ma[ \t]*>|\z)/i) {
+    $chosen = $1;
+  }
+
+  if ($chosen !~ /\S/) {
+    my @lines = split(/\n/, $text);
+    for (my $i = $#lines; $i >= 0; $i--) {
+      if ($lines[$i] =~ /^\s*(?:#{1,6}\s*)?(?:\*\*)?For\s*Pri(?:s)?ma\b/i) {
+        my $inline = $lines[$i];
+        $inline =~ s/^\s*(?:#{1,6}\s*)?(?:\*\*)?For\s*Pri(?:s)?ma(?:\*\*)?\s*:?\s*//i;
+        my $rest = $i < $#lines ? join("\n", @lines[($i + 1) .. $#lines]) : "";
+        $chosen = join("\n", grep { length($_) > 0 } ($inline, $rest));
+        last;
+      }
+    }
+  }
+
+  $chosen = $text if $chosen !~ /\S/;
+
+  # Limpieza para voz: sin bloques de código, URLs, rutas locales ni Markdown
+  $chosen =~ s/```[\s\S]*?```/ /g;
+  $chosen =~ s/~~~[\s\S]*?~~~/ /g;
+  $chosen =~ s/!\[([^\]]*)\]\([^)]*\)/$1/g;
+  $chosen =~ s/\[([^\]]+)\]\([^)]*\)/$1/g;
+  $chosen =~ s/<?https?:\/\/[^\s)>]+>?/ /gi;
+  $chosen =~ s/\bwww\.[^\s)>]+/ /gi;
+  $chosen =~ s/(?:^|\s)(?:~\/|\/(?:Users|Applications|Library|System|private|tmp|var)\/)[^\s,;)]*/ /gm;
+  $chosen =~ s/`([^`]*)`/$1/g;
+  $chosen =~ s/^\s{0,3}#{1,6}\s+//gm;
+  $chosen =~ s/^\s{0,3}>\s?//gm;
+  $chosen =~ s/^\s*[-*+]\s+//gm;
+  $chosen =~ s/^\s*\d+[.)]\s+//gm;
+  $chosen =~ s/(\*\*|__)(.*?)\1/$2/g;
+  $chosen =~ s/(\*|_)(.*?)\1/$2/g;
+  $chosen =~ s/~~(.*?)~~/$1/g;
+  $chosen =~ s/<\/?\s*ForPri(?:s)?ma\s*>/ /gi;
+  $chosen =~ s/[ \t]+/ /g;
+  $chosen =~ s/\n{3,}/\n\n/g;
+  $chosen =~ s/^\s+|\s+$//g;
+
+  print $chosen if length($chosen) > 0;
+' 2>/dev/null || true)"
+
+if [ -n "$EXTRACTED_FOR_PRISMA" ]; then
+  MESSAGE="$EXTRACTED_FOR_PRISMA"
 fi
 
 CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)"

@@ -46,6 +46,13 @@ cp "$PROJECT_ROOT/plugin/scripts/on_stop.sh" "$SUPPORT/on_stop.sh"
 chmod +x "$SUPPORT/on_stop.sh"
 
 mkdir -p "$CODEX_HOME"
+CODEX_AGENTS_FILE="$CODEX_HOME/AGENTS.md"
+if [ ! -f "$CODEX_AGENTS_FILE" ] || ! grep -q "<ForPrisma>" "$CODEX_AGENTS_FILE" 2>/dev/null; then
+  if [ -s "$CODEX_AGENTS_FILE" ]; then
+    printf '\n\n' >> "$CODEX_AGENTS_FILE"
+  fi
+  cat "$PROJECT_ROOT/plugin/AGENTS.md" >> "$CODEX_AGENTS_FILE"
+fi
 HOOK_COMMAND="bash \"$SUPPORT/on_stop.sh\""
 OLD_HOOK_COMMAND="bash \"$HOME/Library/Application Support/CodexVoz/on_stop.sh\""
 if [ -f "$HOOKS_FILE" ]; then
@@ -79,6 +86,14 @@ if command -v codex >/dev/null 2>&1; then
 fi
 
 if command -v claude >/dev/null 2>&1; then
+  mkdir -p "$HOME/.claude"
+  CLAUDE_MD_FILE="$HOME/.claude/CLAUDE.md"
+  if [ ! -f "$CLAUDE_MD_FILE" ] || ! grep -q "<ForPrisma>" "$CLAUDE_MD_FILE" 2>/dev/null; then
+    if [ -s "$CLAUDE_MD_FILE" ]; then
+      printf '\n\n' >> "$CLAUDE_MD_FILE"
+    fi
+    cat "$PROJECT_ROOT/plugin/AGENTS.md" >> "$CLAUDE_MD_FILE"
+  fi
   claude plugin uninstall codex-voz@codex-voz-local >/dev/null 2>&1 || true
   claude plugin marketplace remove codex-voz-local >/dev/null 2>&1 || true
   claude plugin marketplace remove prisma-local >/dev/null 2>&1 || true

@@ -1,12 +1,25 @@
 {
-  "description": "Prisma: avisa con voz y orbe Siri AI al terminar el turno.",
+  "description": "Prisma: avisa con voz y orbe Siri AI al terminar el turno o al hacer preguntas al usuario.",
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion|request_user_input|question",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-$HOME/Library/Application Support/Prisma}}/scripts/on_stop.sh\"",
+            "timeout": 10,
+            "statusMessage": "Prisma"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT}}/scripts/on_stop.sh\"",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-$HOME/Library/Application Support/Prisma}}/scripts/on_stop.sh\"",
             "timeout": 10,
             "statusMessage": "Prisma"
           }
