@@ -45,3 +45,13 @@ También se puede instalar en Claude Code desde el marketplace local:
 # Probar otra voz neural por parámetro (ava, andrew, dalia, jorge, salome, ximena, alvaro, elena):
 ~/Desktop/Prisma/test.sh "Hola. Probando otra voz en Prisma." dalia
 ```
+
+## Documentación
+
+- [`docs/audio-ducking.md`](docs/audio-ducking.md): cómo funciona la atenuación
+  del audio de fondo, parámetros, casos límite, pruebas y limitaciones.
+- [`docs/roadmap.md`](docs/roadmap.md): estado del producto, siguientes mejoras,
+  deuda técnica y decisiones de diseño.
+- [`docs/investigacion.md`](docs/investigacion.md): investigación de los
+  mecanismos de enganche con Codex, Claude Code y OpenCode.
+- [`docs/voces.md`](docs/voces.md): comparativa de voces locales.
