@@ -1,0 +1,10 @@
+{
+  "name": "prisma",
+  "version": "1.0.0",
+  "description": "Muestra el orbe Prisma (estilo Siri AI iOS 27) y habla al terminar cada respuesta en Claude Code, Codex u OpenCode.",
+  "author": {
+    "name": "Newton"
+  },
+  "license": "MIT",
+  "keywords": ["tts", "voice", "siri", "prisma", "notifications", "macos"]
+}

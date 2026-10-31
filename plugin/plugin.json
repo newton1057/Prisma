@@ -1,0 +1,25 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "prisma",
+  "version": "1.0.0",
+  "description": "Habla en voz alta y muestra el orbe Prisma (estilo Siri AI iOS 27) al terminar un turno.",
+  "author": {
+    "name": "Newton"
+  },
+  "license": "MIT",
+  "keywords": ["tts", "voice", "siri", "prisma", "notifications", "macos"],
+  "extensions": {
+    "com.openai": {
+      "hooks": "./hooks/hooks.json",
+      "interface": {
+        "displayName": "Prisma",
+        "shortDescription": "Voz neural y orbe estilo Siri AI iOS 27.",
+        "longDescription": "Al terminar un turno, Prisma muestra un orbe de cristal líquido con horizonte prismático y lee el mensaje final.",
+        "developerName": "Newton",
+        "category": "Productivity",
+        "capabilities": ["Read"],
+        "brandColor": "#3B82F6"
+      }
+    }
+  }
+}
