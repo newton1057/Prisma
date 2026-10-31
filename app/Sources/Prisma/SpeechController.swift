@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import AudioToolbox
 import AppKit
 
 enum TextPreparer {
@@ -153,6 +154,7 @@ final class SpeechController {
     private let config: AppConfig
     private let settings: SettingsStore
     private let overlay: OverlayController
+    private let ducker = SystemAudioDucker()
 
     private var session: SpeechSession?
     private var appleSynth: AVSpeechSynthesizer?
@@ -194,7 +196,7 @@ final class SpeechController {
         lastSignature = signature
         lastSignatureTime = Date()
 
-        stop()
+        stopInternal(restoreDuck: false)
 
         let (resolvedEngine, resolvedEdgeVoice) = resolveEngineAndVoice(
             engineOverride: engineOverride,
@@ -209,7 +211,10 @@ final class SpeechController {
             cwd: cwd,
             isMultilingual: isMultilingual
         )
-        guard !prepared.isEmpty else { return }
+        guard !prepared.isEmpty else {
+            ducker.restore()
+            return
+        }
 
         overlay.setCaption("PRISMA")
         overlay.setProgress(0)
@@ -321,6 +326,8 @@ final class SpeechController {
             backend: backend,
             speed: settings.speed,
             overlay: overlay,
+            duckBoost: { [weak self] in self?.startDuckingForVoice() ?? 0 },
+            duckKeepAlive: { [weak self] in self?.ducker.keepAlive() },
             onFinish: { [weak self] in self?.finish() },
             onError: { [weak self] (started: Bool) in
                 guard let self else { return }
@@ -337,7 +344,26 @@ final class SpeechController {
         session.start()
     }
 
+    /// Called right before the first chunk starts playing, so music is not
+    /// ducked while edge-tts is still synthesizing.
+    private func startDuckingForVoice() -> Double {
+        guard settings.duckAudio else {
+            ducker.restore()
+            return 0
+        }
+        return ducker.duck(to: settings.duckLevel)
+    }
+
     func stop() {
+        stopInternal(restoreDuck: true)
+    }
+
+    func shutdown() {
+        stopInternal(restoreDuck: false)
+        ducker.restoreImmediately()
+    }
+
+    private func stopInternal(restoreDuck: Bool) {
         session?.cancel()
         session = nil
         appleMeterTimer?.invalidate()
@@ -348,12 +374,16 @@ final class SpeechController {
         overlay.setAudioLevel(0)
         overlay.setSpeaking(false)
         overlay.hide(after: 0.15)
+        if restoreDuck {
+            ducker.restore()
+        }
     }
 
     private func finish() {
         session = nil
         appleMeterTimer?.invalidate()
         appleMeterTimer = nil
+        ducker.restore()
         overlay.setProgress(1)
         overlay.setAudioLevel(0)
         overlay.setSpeaking(false)
@@ -361,6 +391,14 @@ final class SpeechController {
     }
 
     private func speakWithApple(_ text: String) {
+        // AVSpeechSynthesizer cannot be boosted, so duck less aggressively to
+        // keep the fallback voice intelligible.
+        if settings.duckAudio {
+            _ = ducker.duck(to: max(0.65, settings.duckLevel))
+        } else {
+            ducker.restore()
+        }
+
         let synth = AVSpeechSynthesizer()
         let delegate = AppleSpeechDelegate(
             onFinish: { [weak self] in self?.finish() }
@@ -411,6 +449,8 @@ final class SpeechSession: NSObject {
     private let backend: Backend
     private let speed: Double
     private weak var overlay: OverlayController?
+    private let duckBoost: () -> Double
+    private let duckKeepAlive: () -> Void
     private let onFinish: () -> Void
     private let onError: (Bool) -> Void
 
@@ -422,8 +462,16 @@ final class SpeechSession: NSObject {
     private var didStartPlayback = false
     private var isCancelled = false
     private var didFinish = false
-    private var player: AVAudioPlayer?
-    private var meterTimer: Timer?
+
+    private let engine = AVAudioEngine()
+    private let limiter: AVAudioUnitEffect
+    private var playerNode: AVAudioPlayerNode?
+    private var pendingNode: AVAudioPlayerNode?
+    private var currentFile: AVAudioFile?
+    private var playbackWorkItem: DispatchWorkItem?
+    private var graphReady = false
+    private var meterTapInstalled = false
+    private var lastMeterDispatch: CFTimeInterval = 0
     private var smoothedLevel: Double = 0
 
     init(
@@ -431,6 +479,8 @@ final class SpeechSession: NSObject {
         backend: Backend,
         speed: Double,
         overlay: OverlayController,
+        duckBoost: @escaping () -> Double,
+        duckKeepAlive: @escaping () -> Void,
         onFinish: @escaping () -> Void,
         onError: @escaping (Bool) -> Void
     ) {
@@ -438,8 +488,19 @@ final class SpeechSession: NSObject {
         self.backend = backend
         self.speed = speed
         self.overlay = overlay
+        self.duckBoost = duckBoost
+        self.duckKeepAlive = duckKeepAlive
         self.onFinish = onFinish
         self.onError = onError
+
+        var description = AudioComponentDescription()
+        description.componentType = kAudioUnitType_Effect
+        description.componentSubType = kAudioUnitSubType_PeakLimiter
+        description.componentManufacturer = kAudioUnitManufacturer_Apple
+        description.componentFlags = 0
+        description.componentFlagsMask = 0
+        self.limiter = AVAudioUnitEffect(audioComponentDescription: description)
+
         super.init()
     }
 
@@ -456,9 +517,8 @@ final class SpeechSession: NSObject {
 
     func cancel() {
         isCancelled = true
-        stopMetering()
-        player?.stop()
-        player = nil
+        isPlaying = false
+        teardownEngine()
         cleanupFiles()
     }
 
@@ -508,54 +568,139 @@ final class SpeechSession: NSObject {
     private func play(_ index: Int) {
         guard !isCancelled, let url = audioURLs[index] else { return }
         do {
-            let player = try AVAudioPlayer(contentsOf: url)
-            player.delegate = self
-            player.isMeteringEnabled = true
-            player.prepareToPlay()
-            player.play()
-            self.player = player
-            self.isPlaying = true
-            self.currentIndex = index
-            self.didStartPlayback = true
-            startMetering()
+            let file = try AVAudioFile(forReading: url)
+            let format = file.processingFormat
 
-            let progress = Double(index) / Double(max(1, chunks.count))
-            overlay?.setProgress(progress)
-            overlay?.setCaption("PRISMA")
-
-            if index + 1 < chunks.count, audioURLs[index + 1] == nil {
-                synthesize(index + 1)
+            if !graphReady {
+                engine.attach(limiter)
+                engine.connect(limiter, to: engine.mainMixerNode, format: format)
+                installMeterTap()
+                graphReady = true
             }
-            if index + 2 < chunks.count, audioURLs[index + 2] == nil {
-                synthesize(index + 2)
+
+            let node = AVAudioPlayerNode()
+            engine.attach(node)
+            engine.connect(node, to: limiter, format: format)
+
+            if !engine.isRunning {
+                try engine.start()
+            }
+
+            var preRoll: TimeInterval = 0
+            if !didStartPlayback {
+                let boost = duckBoost()
+                applyLimiterGain(boost)
+                // Give the system volume ramp a head start so the first word
+                // does not play at full volume with the voice already boosted.
+                if boost > 0.1 {
+                    preRoll = 0.32
+                }
+            }
+
+            if preRoll > 0 {
+                pendingNode = node
+                let work = DispatchWorkItem { [weak self] in
+                    self?.beginPlayback(node: node, file: file, index: index)
+                }
+                playbackWorkItem = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + preRoll, execute: work)
+            } else {
+                beginPlayback(node: node, file: file, index: index)
             }
         } catch {
             onError(didStartPlayback)
         }
     }
 
-    private func startMetering() {
-        meterTimer?.invalidate()
-        meterTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            guard let self, !self.isCancelled, let player = self.player, player.isPlaying else { return }
-            player.updateMeters()
-            let avg = Double(player.averagePower(forChannel: 0))
-            let peak = Double(player.peakPower(forChannel: 0))
-            let combinedDb = avg * 0.65 + peak * 0.35
-            let normalized = max(0.0, min(1.0, (combinedDb + 44.0) / 40.0))
-            let target = pow(normalized, 1.25)
-            if target > self.smoothedLevel {
-                self.smoothedLevel = self.smoothedLevel * 0.32 + target * 0.68
+    private func beginPlayback(node: AVAudioPlayerNode, file: AVAudioFile, index: Int) {
+        guard !isCancelled, !isPlaying, !didFinish, node.engine != nil else {
+            detach(node: node)
+            return
+        }
+        pendingNode = nil
+        playbackWorkItem = nil
+
+        node.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.chunkFinished(index)
+            }
+        }
+        node.play()
+
+        playerNode = node
+        currentFile = file
+        isPlaying = true
+        currentIndex = index
+        didStartPlayback = true
+        duckKeepAlive()
+
+        let progress = Double(index) / Double(max(1, chunks.count))
+        overlay?.setProgress(progress)
+        overlay?.setCaption("PRISMA")
+
+        if index + 1 < chunks.count, audioURLs[index + 1] == nil {
+            synthesize(index + 1)
+        }
+        if index + 2 < chunks.count, audioURLs[index + 2] == nil {
+            synthesize(index + 2)
+        }
+    }
+
+    private func applyLimiterGain(_ decibels: Double) {
+        let preGain = Float(min(12.0, max(0.0, decibels)))
+        let unit = limiter.audioUnit
+        AudioUnitSetParameter(unit, kLimiterParam_AttackTime, kAudioUnitScope_Global, 0, 0.006, 0)
+        AudioUnitSetParameter(unit, kLimiterParam_DecayTime, kAudioUnitScope_Global, 0, 0.05, 0)
+        AudioUnitSetParameter(unit, kLimiterParam_PreGain, kAudioUnitScope_Global, 0, preGain, 0)
+    }
+
+    private func installMeterTap() {
+        guard !meterTapInstalled else { return }
+        engine.mainMixerNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] buffer, _ in
+            self?.processMeter(buffer)
+        }
+        meterTapInstalled = true
+    }
+
+    private func processMeter(_ buffer: AVAudioPCMBuffer) {
+        guard let channels = buffer.floatChannelData else { return }
+        let frames = Int(buffer.frameLength)
+        let channelCount = Int(buffer.format.channelCount)
+        guard frames > 0, channelCount > 0 else { return }
+
+        var sum: Float = 0
+        for channel in 0..<channelCount {
+            let samples = channels[channel]
+            for frame in 0..<frames {
+                sum += samples[frame] * samples[frame]
+            }
+        }
+
+        let rms = sqrt(sum / Float(frames * channelCount))
+        let db = 20.0 * log10(max(Double(rms), 0.00001))
+        let normalized = max(0.0, min(1.0, (db + 45.0) / 35.0))
+        let level = pow(normalized, 1.2)
+
+        let now = CACurrentMediaTime()
+        guard now - lastMeterDispatch >= 1.0 / 30.0 else { return }
+        lastMeterDispatch = now
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.isCancelled, self.isPlaying else { return }
+            if level > self.smoothedLevel {
+                self.smoothedLevel = self.smoothedLevel * 0.32 + level * 0.68
             } else {
-                self.smoothedLevel = self.smoothedLevel * 0.72 + target * 0.28
+                self.smoothedLevel = self.smoothedLevel * 0.72 + level * 0.28
             }
             self.overlay?.setAudioLevel(self.smoothedLevel)
         }
     }
 
     private func stopMetering() {
-        meterTimer?.invalidate()
-        meterTimer = nil
+        if meterTapInstalled {
+            engine.mainMixerNode.removeTap(onBus: 0)
+            meterTapInstalled = false
+        }
         smoothedLevel = 0
         overlay?.setAudioLevel(0)
     }
@@ -563,9 +708,60 @@ final class SpeechSession: NSObject {
     private func finishIfNeeded() {
         guard !didFinish else { return }
         didFinish = true
-        stopMetering()
+        isPlaying = false
+        teardownEngine()
         cleanupFiles()
         onFinish()
+    }
+
+    private func chunkFinished(_ index: Int) {
+        guard !isCancelled, currentIndex == index else { return }
+        isPlaying = false
+        detachPlayerNode()
+        smoothedLevel = 0
+        overlay?.setAudioLevel(0)
+
+        let next = index + 1
+        if next < chunks.count {
+            // Advance currentIndex BEFORE checking audioURLs[next] so if `next` is still
+            // synthesizing, its completion handler sees `self.currentIndex == indexCopy` and plays it!
+            currentIndex = next
+            if audioURLs[next] != nil {
+                play(next)
+            } else {
+                synthesize(next)
+            }
+        } else {
+            finishIfNeeded()
+        }
+    }
+
+    private func detachPlayerNode() {
+        guard let node = playerNode else { return }
+        detach(node: node)
+        playerNode = nil
+        currentFile = nil
+    }
+
+    private func detach(node: AVAudioPlayerNode) {
+        guard node.engine != nil else { return }
+        node.stop()
+        engine.disconnectNodeOutput(node)
+        engine.detach(node)
+    }
+
+    private func teardownEngine() {
+        playbackWorkItem?.cancel()
+        playbackWorkItem = nil
+        if let pending = pendingNode {
+            detach(node: pending)
+            pendingNode = nil
+        }
+        stopMetering()
+        detachPlayerNode()
+        if engine.isRunning {
+            engine.stop()
+        }
     }
 
     private func cleanupFiles() {
@@ -671,29 +867,5 @@ final class SpeechSession: NSObject {
         }
 
         return output
-    }
-}
-
-extension SpeechSession: AVAudioPlayerDelegate {
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        DispatchQueue.main.async {
-            guard !self.isCancelled else { return }
-            self.isPlaying = false
-            self.player = nil
-            let next = self.currentIndex + 1
-
-            if next < self.chunks.count {
-                // Advance currentIndex BEFORE checking audioURLs[next] so if `next` is still
-                // synthesizing, its completion handler sees `self.currentIndex == indexCopy` and plays it!
-                self.currentIndex = next
-                if self.audioURLs[next] != nil {
-                    self.play(next)
-                } else {
-                    self.synthesize(next)
-                }
-            } else {
-                self.finishIfNeeded()
-            }
-        }
     }
 }

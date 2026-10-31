@@ -18,6 +18,9 @@ Cuando cualquiera de tus agentes termina un turno —o se detiene para hacerte u
   - **Microsoft Edge Neural TTS (`edge-tts`)**: voz por defecto `en-US-AvaMultilingualNeural` (Ava Multilingüe), más soporte para Andrew, Emma, Brian, Dalia, Jorge, Salomé, Ximena, Álvaro y Elena.
   - **Respaldo offline**: Piper TTS (`es_MX-claude-high.onnx`) y Apple `AVSpeechSynthesizer` (Paulina).
   - **Pronunciación natural**: normaliza siglas y términos técnicos en español (`iOS`, `macOS`, `OpenCode`, `GPT`, `TTS`, `Siri AI`, `Notch`, `Wi-Fi`, etc.).
+- **Atenuación del audio de fondo (ducking)**:
+  - Al empezar a hablar, Prisma baja suavemente el volumen del Mac (35% por defecto) y sube el nivel de su propia voz con un limitador, para que la música o el video queden de fondo y la voz en primer plano.
+  - Al terminar (o si se detiene la voz, se cierra la app o se agota el tiempo de seguridad), el volumen del sistema se restaura solo. Se puede ajustar la intensidad o desactivar en **Ajustes → Audio de fondo**.
 
 ## Instalación
 

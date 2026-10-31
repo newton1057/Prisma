@@ -106,6 +106,14 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(stayVisible, forKey: Keys.stayVisible) }
     }
 
+    @Published var duckAudio: Bool {
+        didSet { defaults.set(duckAudio, forKey: Keys.duckAudio) }
+    }
+
+    @Published var duckLevel: Double {
+        didSet { defaults.set(duckLevel, forKey: Keys.duckLevel) }
+    }
+
     @Published var piperModelPath: String {
         didSet { defaults.set(piperModelPath, forKey: Keys.piperModelPath) }
     }
@@ -123,6 +131,8 @@ final class SettingsStore: ObservableObject {
         static let speed = "speed"
         static let position = "position"
         static let stayVisible = "stayVisible"
+        static let duckAudio = "duckAudio"
+        static let duckLevel = "duckLevel"
         static let piperModelPath = "piperModelPath"
         static let piperPythonPath = "piperPythonPath"
     }
@@ -134,6 +144,8 @@ final class SettingsStore: ObservableObject {
         speed = defaults.object(forKey: Keys.speed) as? Double ?? 1.0
         position = OverlayPosition(rawValue: defaults.string(forKey: Keys.position) ?? "") ?? .top
         stayVisible = defaults.object(forKey: Keys.stayVisible) as? Bool ?? true
+        duckAudio = defaults.object(forKey: Keys.duckAudio) as? Bool ?? true
+        duckLevel = defaults.object(forKey: Keys.duckLevel) as? Double ?? 0.35
         piperModelPath = defaults.string(forKey: Keys.piperModelPath) ?? ""
         piperPythonPath = defaults.string(forKey: Keys.piperPythonPath) ?? ""
     }

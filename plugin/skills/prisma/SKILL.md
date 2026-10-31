@@ -17,6 +17,7 @@ Plugin y app nativa de macOS que avisa cuando termina un turno o se solicita inf
 - **Reproducción y animación**:
   - `on_stop.sh` envía el texto limpio a **Prisma.app** por `127.0.0.1`.
   - La app despliega el orbe con horizonte prismático reactivo al audio y reproduce la voz con **Edge Neural TTS (Ava)**, **Piper** o **Apple Paulina**.
+  - Mientras habla, Prisma atenúa la música y los videos del sistema y sube su propia voz; al terminar restaura el volumen (configurable en **Ajustes → Audio de fondo**).
 
 ## Prueba rápida
 

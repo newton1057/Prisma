@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var overlay: OverlayController!
     private var speech: SpeechController!
     private var server: HTTPServer?
+    private var terminateSignalSource: DispatchSourceSignal?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -57,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupStatusItem()
         startServer()
+        installTerminationHandler()
         cleanupOldTempFiles()
 
         if CommandLine.arguments.contains("--settings") {
@@ -67,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        speech?.shutdown()
         server?.stop()
         try? FileManager.default.removeItem(at: AppPaths.runtime)
     }
@@ -118,6 +121,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         server.start()
     }
 
+    /// `pkill` / SIGTERM does not trigger `applicationWillTerminate`, so we
+    /// handle it explicitly to make sure a ducked system volume is restored.
+    private func installTerminationHandler() {
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.speech?.shutdown()
+            NSApp.terminate(nil)
+        }
+        source.resume()
+        terminateSignalSource = source
+    }
+
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
@@ -164,7 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showSettings() {
         if settingsWindow == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 580, height: 660),
+                contentRect: NSRect(x: 0, y: 0, width: 580, height: 880),
                 styleMask: [.titled, .closable, .miniaturizable],
                 backing: .buffered,
                 defer: false

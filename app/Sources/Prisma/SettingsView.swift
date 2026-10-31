@@ -58,6 +58,27 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Audio de fondo") {
+                Toggle("Bajar música y videos mientras Prisma habla", isOn: $settings.duckAudio)
+
+                if settings.duckAudio {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Volumen mientras hablo")
+                            Spacer()
+                            Text("\(Int(settings.duckLevel * 100))%")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: $settings.duckLevel, in: 0.15...0.7, step: 0.05)
+                    }
+
+                    Text("Prisma baja el volumen del Mac y sube el nivel de su propia voz para quedar en primer plano. Al terminar, el volumen vuelve solo a su nivel anterior.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Animación") {
                 Picker("Posición", selection: $settings.position) {
                     ForEach(OverlayPosition.allCases) { position in
@@ -114,6 +135,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 580, height: 660)
+        .frame(width: 580, height: 880)
     }
 }
