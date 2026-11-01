@@ -224,7 +224,7 @@ final class OverlayController {
 
     private func position(_ panel: NSPanel, animated: Bool = false, delay: TimeInterval = 0) {
         let connected = rowScreen.flatMap { row in NSScreen.screens.first { $0 == row } }
-        guard let screen = connected ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        guard let screen = connected ?? settings.resolvedScreen() ?? NSScreen.main ?? NSScreen.screens.first else { return }
         let frame = screen.frame
         let size = panelSize
         let origin: NSPoint

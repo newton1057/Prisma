@@ -131,7 +131,7 @@ The current app interface uses Spanish labels. On macOS, open **Prisma → Ajust
 | **Reading mode** | Full message, short summary, or notice only. These modes apply to the text received by the app. |
 | **Speed** | 0.8× to 1.2×. |
 | **Background audio** | Enable or disable ducking and adjust its strength. |
-| **Animation** | Orb position, global keyboard shortcut to cycle positions (`⌃⌥P` by default), thinking mode, and how long it stays visible afterward. |
+| **Animation** | Target display (any connected monitor, active display, or pointer display), global shortcut to switch displays (`⌃⌥M` by default), orb position (top/bottom row, left/right vertical column, center, or corner), global shortcut to cycle positions (`⌃⌥P` by default), thinking mode, and how long it stays visible afterward. |
 | **Halo color by agent** | Independent halo palette (10 themes) for Codex, Claude Code, and OpenCode across waiting, thinking, and voice states. |
 
 On macOS, ducking is enabled by default and affects the **output device's global volume**, including calls and notifications. By default, it lowers the volume to 35% of its previous level and restores it afterward. Devices whose volume cannot be controlled by macOS are skipped. See [Background audio](docs/audio-ducking.md) for details and limitations. Windows uses per-session ducking; see the [Windows guide](docs/windows.md).

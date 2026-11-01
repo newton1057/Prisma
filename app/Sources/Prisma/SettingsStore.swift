@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Combine
 import Carbon
 
@@ -121,6 +122,46 @@ enum PositionShortcut: String, CaseIterable, Identifiable {
     }
 }
 
+enum ScreenShortcut: String, CaseIterable, Identifiable {
+    case ctrlOptionM
+    case ctrlShiftM
+    case optionCommandM
+    case ctrlOptionS
+    case disabled
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .ctrlOptionM: return "⌃⌥M (Control + Opción + M)"
+        case .ctrlShiftM: return "⌃⇧M (Control + Shift + M)"
+        case .optionCommandM: return "⌥⌘M (Opción + Comando + M)"
+        case .ctrlOptionS: return "⌃⌥S (Control + Opción + S)"
+        case .disabled: return "Desactivado"
+        }
+    }
+
+    var carbonKey: (keyCode: UInt32, modifiers: UInt32)? {
+        switch self {
+        case .ctrlOptionM:
+            return (UInt32(kVK_ANSI_M), UInt32(controlKey | optionKey))
+        case .ctrlShiftM:
+            return (UInt32(kVK_ANSI_M), UInt32(controlKey | shiftKey))
+        case .optionCommandM:
+            return (UInt32(kVK_ANSI_M), UInt32(optionKey | cmdKey))
+        case .ctrlOptionS:
+            return (UInt32(kVK_ANSI_S), UInt32(controlKey | optionKey))
+        case .disabled:
+            return nil
+        }
+    }
+}
+
+struct DisplayOption: Identifiable, Equatable {
+    let id: String
+    let title: String
+}
+
 final class SettingsStore: ObservableObject {
     @Published var voice: VoiceEngine {
         didSet { defaults.set(voice.rawValue, forKey: Keys.voice) }
@@ -146,6 +187,14 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(positionShortcut.rawValue, forKey: Keys.positionShortcut) }
     }
 
+    @Published var targetDisplay: String {
+        didSet { defaults.set(targetDisplay, forKey: Keys.targetDisplay) }
+    }
+
+    @Published var screenShortcut: ScreenShortcut {
+        didSet { defaults.set(screenShortcut.rawValue, forKey: Keys.screenShortcut) }
+    }
+
     func cyclePosition() {
         let all = OverlayPosition.allCases
         guard let index = all.firstIndex(of: position) else {
@@ -153,6 +202,65 @@ final class SettingsStore: ObservableObject {
             return
         }
         position = all[(index + 1) % all.count]
+    }
+
+    static func displayID(of screen: NSScreen) -> UInt32 {
+        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
+    }
+
+    func displayOptions() -> [DisplayOption] {
+        var options: [DisplayOption] = []
+        for (index, screen) in NSScreen.screens.enumerated() {
+            let id = Self.displayID(of: screen)
+            let w = Int(screen.frame.width)
+            let h = Int(screen.frame.height)
+            let rawName = screen.localizedName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let name: String
+            if !rawName.isEmpty {
+                name = rawName
+            } else if CGDisplayIsBuiltin(id) != 0 {
+                name = "Pantalla integrada"
+            } else {
+                name = "Monitor externo \(index + 1)"
+            }
+            options.append(DisplayOption(id: "screen:\(id)", title: "Pantalla \(index + 1): \(name) (\(w)×\(h))"))
+        }
+        options.append(DisplayOption(id: "active", title: "Automático: Pantalla activa"))
+        options.append(DisplayOption(id: "pointer", title: "Automático: Pantalla del cursor"))
+        if !options.contains(where: { $0.id == targetDisplay }) {
+            options.insert(DisplayOption(id: targetDisplay, title: "Pantalla seleccionada"), at: 0)
+        }
+        return options
+    }
+
+    func resolvedScreen() -> NSScreen? {
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return nil }
+        if targetDisplay.hasPrefix("screen:"),
+           let raw = UInt32(targetDisplay.dropFirst("screen:".count)),
+           let match = screens.first(where: { Self.displayID(of: $0) == raw }) {
+            return match
+        }
+        if targetDisplay == "pointer" {
+            let mouse = NSEvent.mouseLocation
+            if let match = screens.first(where: { NSMouseInRect(mouse, $0.frame, false) }) {
+                return match
+            }
+        }
+        if targetDisplay == "active" {
+            return NSScreen.main ?? screens.first
+        }
+        return screens.first ?? NSScreen.main
+    }
+
+    func cycleScreen() {
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return }
+        let current = resolvedScreen() ?? screens[0]
+        let currentID = Self.displayID(of: current)
+        let index = screens.firstIndex(where: { Self.displayID(of: $0) == currentID }) ?? 0
+        let next = screens[(index + 1) % screens.count]
+        targetDisplay = "screen:\(Self.displayID(of: next))"
     }
 
     @Published var haloTheme: HaloTheme {
@@ -213,6 +321,8 @@ final class SettingsStore: ObservableObject {
         static let speed = "speed"
         static let position = "position"
         static let positionShortcut = "positionShortcut"
+        static let targetDisplay = "targetDisplay"
+        static let screenShortcut = "screenShortcut"
         static let haloTheme = "haloTheme"
         static let codexTheme = "codexTheme"
         static let claudeTheme = "claudeTheme"
@@ -232,6 +342,14 @@ final class SettingsStore: ObservableObject {
         speed = defaults.object(forKey: Keys.speed) as? Double ?? 1.0
         position = OverlayPosition(rawValue: defaults.string(forKey: Keys.position) ?? "") ?? .top
         positionShortcut = PositionShortcut(rawValue: defaults.string(forKey: Keys.positionShortcut) ?? "") ?? .ctrlOptionP
+        if let savedDisplay = defaults.string(forKey: Keys.targetDisplay), !savedDisplay.isEmpty {
+            targetDisplay = savedDisplay
+        } else if let first = NSScreen.screens.first {
+            targetDisplay = "screen:\(Self.displayID(of: first))"
+        } else {
+            targetDisplay = "active"
+        }
+        screenShortcut = ScreenShortcut(rawValue: defaults.string(forKey: Keys.screenShortcut) ?? "") ?? .ctrlOptionM
         let fallbackTheme = HaloTheme(rawValue: defaults.string(forKey: Keys.haloTheme) ?? "") ?? .prisma
         haloTheme = fallbackTheme
         codexTheme = HaloTheme(rawValue: defaults.string(forKey: Keys.codexTheme) ?? "") ?? fallbackTheme

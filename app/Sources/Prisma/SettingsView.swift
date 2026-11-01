@@ -80,6 +80,18 @@ struct SettingsView: View {
             }
 
             Section("Animación") {
+                Picker("Pantalla", selection: $settings.targetDisplay) {
+                    ForEach(settings.displayOptions()) { option in
+                        Text(option.title).tag(option.id)
+                    }
+                }
+
+                Picker("Atajo para cambiar pantalla", selection: $settings.screenShortcut) {
+                    ForEach(ScreenShortcut.allCases) { shortcut in
+                        Text(shortcut.title).tag(shortcut)
+                    }
+                }
+
                 Picker("Posición", selection: $settings.position) {
                     ForEach(OverlayPosition.allCases) { position in
                         Text(position.title).tag(position)

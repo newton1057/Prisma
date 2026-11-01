@@ -56,8 +56,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var localMouseMonitor: Any?
     private var hoverTimer: DispatchSourceTimer?
     private var hotKeyRef: EventHotKeyRef?
+    private var screenHotKeyRef: EventHotKeyRef?
     private var hotKeyHandler: EventHandlerRef?
     private var shortcutCancellable: AnyCancellable?
+    private var screenShortcutCancellable: AnyCancellable?
+    private var displayCancellable: AnyCancellable?
     private static weak var shared: AppDelegate?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -103,12 +106,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startHoverMonitor()
         installHotKeyHandler()
         registerPositionHotKey(settings.positionShortcut)
+        registerScreenHotKey(settings.screenShortcut)
         shortcutCancellable = settings.$positionShortcut
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] shortcut in
                 self?.registerPositionHotKey(shortcut)
             }
+        screenShortcutCancellable = settings.$screenShortcut
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] shortcut in
+                self?.registerScreenHotKey(shortcut)
+            }
+        displayCancellable = settings.$targetDisplay
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.overlay.rowScreen = self.settings.resolvedScreen()
+                self.overlay.reposition()
+                self.arrangeSessions()
+            }
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.overlay.rowScreen = self.settings.resolvedScreen()
+            self.overlay.reposition()
+            self.arrangeSessions()
+        }
         installTerminationHandler()
         cleanupOldTempFiles()
 
@@ -123,6 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionMonitor?.cancel()
         hoverTimer?.cancel()
         if let existing = hotKeyRef { UnregisterEventHotKey(existing) }
+        if let existingScreen = screenHotKeyRef { UnregisterEventHotKey(existingScreen) }
         if let handler = hotKeyHandler { RemoveEventHandler(handler) }
         if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
         if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
@@ -452,9 +482,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Places every session orb in the row; visible orbs slide to their new
     /// place, after `delay` when they close the gap left by a leaving orb.
     private func arrangeSessions(delay: TimeInterval = 0) {
-        // The row moves as a whole: it follows the active screen only when it
-        // is arranged again, never one orb at a time.
-        let screen = NSScreen.main ?? NSScreen.screens.first
+        // The row moves as a whole on the chosen display (or active/pointer display).
+        let screen = settings.resolvedScreen() ?? NSScreen.main ?? NSScreen.screens.first
         let widths = sessionOrder.map { id -> CGFloat in
             guard let orb = sessionOverlays[id] else { return OverlayController.inactiveSpacing }
             return orb.model.isActive ? OverlayController.activeSpacing : OverlayController.inactiveSpacing
@@ -726,6 +755,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Probar voz", action: #selector(testVoiceAction), keyEquivalent: "t"))
         menu.addItem(NSMenuItem(title: "Detener", action: #selector(stopAction), keyEquivalent: "."))
         menu.addItem(NSMenuItem(title: "Cambiar posición de los orbes", action: #selector(cyclePositionAction), keyEquivalent: "p"))
+        menu.addItem(NSMenuItem(title: "Cambiar de pantalla", action: #selector(cycleScreenAction), keyEquivalent: "m"))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Ajustes…", action: #selector(settingsAction), keyEquivalent: ","))
         menu.addItem(.separator())
@@ -742,9 +772,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             eventClass: OSType(kEventClassKeyboard),
             eventKind: UInt32(kEventHotKeyPressed)
         )
-        let callback: EventHandlerUPP = { _, _, _ in
+        let callback: EventHandlerUPP = { _, event, _ in
+            var hotKeyID = EventHotKeyID()
+            let status = GetEventParameter(
+                event,
+                EventParamName(kEventParamDirectObject),
+                EventParamType(typeEventHotKeyID),
+                nil,
+                MemoryLayout<EventHotKeyID>.size,
+                nil,
+                &hotKeyID
+            )
+            let id = status == noErr ? hotKeyID.id : 1
             DispatchQueue.main.async {
-                AppDelegate.shared?.settings.cyclePosition()
+                if id == 2 {
+                    AppDelegate.shared?.settings.cycleScreen()
+                } else {
+                    AppDelegate.shared?.settings.cyclePosition()
+                }
             }
             return noErr
         }
@@ -775,8 +820,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
+    private func registerScreenHotKey(_ shortcut: ScreenShortcut) {
+        if let existing = screenHotKeyRef {
+            UnregisterEventHotKey(existing)
+            screenHotKeyRef = nil
+        }
+        guard let (keyCode, modifiers) = shortcut.carbonKey else { return }
+        let hotKeyID = EventHotKeyID(signature: OSType(0x5052534D), id: 2) // 'PRSM'
+        RegisterEventHotKey(
+            keyCode,
+            modifiers,
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &screenHotKeyRef
+        )
+    }
+
     @objc private func cyclePositionAction() {
         settings.cyclePosition()
+    }
+
+    @objc private func cycleScreenAction() {
+        settings.cycleScreen()
     }
 
     @objc private func testVoiceAction() {
