@@ -693,8 +693,9 @@ struct OverlayView: View {
     }
 }
 
-/// Liquid-glass capsule that emerges from the orb container while hovered,
-/// showing which agent and session the orb belongs to.
+/// Liquid-glass chip fused directly to the orb container while hovered,
+/// showing the session title on top and the agent name below, left-aligned
+/// in a Consolas-style monospaced font.
 struct OrbInfoBadgeView: View {
     let agentTitle: String
     let sessionTitle: String
@@ -703,94 +704,105 @@ struct OrbInfoBadgeView: View {
     let orbScale: CGFloat
     let hover: CGFloat
 
+    private static func monoFont(size: CGFloat, weight: Font.Weight) -> Font {
+        if NSFont(name: "Consolas", size: size) != nil {
+            return .custom("Consolas", size: size).weight(weight)
+        }
+        return .system(size: size, weight: weight, design: .monospaced)
+    }
+
     var body: some View {
         let p = min(1, max(0, hover))
         let inv = 1.0 - p
         let r = 99.0 * orbScale
-        let stretch = 0.16 * sin(p * .pi) * pow(inv, 0.5)
-        let baseScale = 0.22 + 0.78 * p
+        let stretch = 0.12 * sin(p * .pi) * pow(inv, 0.5)
+        let grow = 0.08 + 0.92 * p
+        let cross = 0.72 + 0.28 * p
 
         switch position {
         case .left:
-            badgeCard
+            chipCard(edgeInset: .init(top: 7, leading: 26, bottom: 7, trailing: 13))
                 .scaleEffect(
-                    x: baseScale * (1.0 + stretch),
-                    y: baseScale * (1.0 - stretch * 0.35),
+                    x: grow * (1.0 + stretch),
+                    y: cross,
                     anchor: .leading
                 )
-                .blur(radius: 5.5 * inv)
-                .opacity(Double(min(1, p * 1.35)))
-                .padding(.leading, (20 + r) * inv + (20 + 2 * r + 10) * p)
+                .opacity(Double(min(1, p * 1.4)))
+                .padding(.leading, max(0, 20 + 2 * r - 22))
                 .frame(width: 460, height: 360, alignment: .leading)
 
         case .right:
-            badgeCard
+            chipCard(edgeInset: .init(top: 7, leading: 13, bottom: 7, trailing: 26))
                 .scaleEffect(
-                    x: baseScale * (1.0 + stretch),
-                    y: baseScale * (1.0 - stretch * 0.35),
+                    x: grow * (1.0 + stretch),
+                    y: cross,
                     anchor: .trailing
                 )
-                .blur(radius: 5.5 * inv)
-                .opacity(Double(min(1, p * 1.35)))
-                .padding(.trailing, (20 + r) * inv + (20 + 2 * r + 10) * p)
+                .opacity(Double(min(1, p * 1.4)))
+                .padding(.trailing, max(0, 20 + 2 * r - 22))
                 .frame(width: 460, height: 360, alignment: .trailing)
 
         case .bottom:
-            let y = (151 - r) * inv + (151 - 2 * r - 30) * p
-            badgeCard
+            chipCard(edgeInset: .init(top: 8, leading: 13, bottom: 20, trailing: 13))
                 .scaleEffect(
-                    x: baseScale * (1.0 - stretch * 0.35),
-                    y: baseScale * (1.0 + stretch),
+                    x: cross,
+                    y: grow * (1.0 + stretch),
                     anchor: .bottom
                 )
-                .blur(radius: 5.5 * inv)
-                .opacity(Double(min(1, p * 1.35)))
-                .offset(x: 0, y: y)
+                .opacity(Double(min(1, p * 1.4)))
+                .padding(.bottom, max(0, 29 + 2 * r - 16))
+                .frame(width: 460, height: 360, alignment: .bottom)
 
         case .corner:
-            let x = (141 - r) * inv + (141 - r - 24) * p
-            let y = (151 - r) * inv + (151 - 2 * r - 30) * p
-            badgeCard
+            chipCard(edgeInset: .init(top: 8, leading: 13, bottom: 20, trailing: 13))
                 .scaleEffect(
-                    x: baseScale * (1.0 - stretch * 0.35),
-                    y: baseScale * (1.0 + stretch),
+                    x: cross,
+                    y: grow * (1.0 + stretch),
                     anchor: .bottom
                 )
-                .blur(radius: 5.5 * inv)
-                .opacity(Double(min(1, p * 1.35)))
-                .offset(x: x, y: y)
+                .opacity(Double(min(1, p * 1.4)))
+                .offset(x: 141 - r - 18)
+                .padding(.bottom, max(0, 29 + 2 * r - 16))
+                .frame(width: 460, height: 360, alignment: .bottom)
 
         case .center:
-            let y = (-99 + r) * inv + (-99 + 2 * r + 30) * p
-            badgeCard
+            chipCard(edgeInset: .init(top: 20, leading: 13, bottom: 8, trailing: 13))
                 .scaleEffect(
-                    x: baseScale * (1.0 - stretch * 0.35),
-                    y: baseScale * (1.0 + stretch),
+                    x: cross,
+                    y: grow * (1.0 + stretch),
                     anchor: .top
                 )
-                .blur(radius: 5.5 * inv)
-                .opacity(Double(min(1, p * 1.35)))
-                .offset(x: 0, y: y)
+                .opacity(Double(min(1, p * 1.4)))
+                .padding(.top, max(0, 81 + 2 * r - 16))
+                .frame(width: 460, height: 360, alignment: .top)
 
         case .top:
-            let y = (-125 + r) * inv + (-125 + 2 * r + 30) * p
-            badgeCard
+            chipCard(edgeInset: .init(top: 20, leading: 13, bottom: 8, trailing: 13))
                 .scaleEffect(
-                    x: baseScale * (1.0 - stretch * 0.35),
-                    y: baseScale * (1.0 + stretch),
+                    x: cross,
+                    y: grow * (1.0 + stretch),
                     anchor: .top
                 )
-                .blur(radius: 5.5 * inv)
-                .opacity(Double(min(1, p * 1.35)))
-                .offset(x: 0, y: y)
+                .opacity(Double(min(1, p * 1.4)))
+                .padding(.top, max(0, 55 + 2 * r - 16))
+                .frame(width: 460, height: 360, alignment: .top)
         }
     }
 
-    private var badgeCard: some View {
+    private func chipCard(edgeInset: EdgeInsets) -> some View {
         let pal = theme.palette
         let accent = Color(red: pal.lowerMid.x, green: pal.lowerMid.y, blue: pal.lowerMid.z)
         let warm = Color(red: pal.upperBright.x, green: pal.upperBright.y, blue: pal.upperBright.z)
-        return VStack(spacing: 2) {
+        let displayTitle = sessionTitle.isEmpty ? "Sesión activa" : sessionTitle
+        let shape = RoundedRectangle(cornerRadius: 15, style: .continuous)
+
+        return VStack(alignment: .leading, spacing: 3) {
+            Text(displayTitle)
+                .font(Self.monoFont(size: 11.5, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.96))
+                .lineLimit(1)
+                .truncationMode(.tail)
+
             HStack(spacing: 5) {
                 Circle()
                     .fill(
@@ -801,31 +813,23 @@ struct OrbInfoBadgeView: View {
                         )
                     )
                     .frame(width: 6, height: 6)
-                    .shadow(color: accent.opacity(0.8), radius: 3)
+                    .shadow(color: accent.opacity(0.85), radius: 3)
 
-                Text(agentTitle.uppercased())
-                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                    .tracking(1.1)
+                Text(agentTitle)
+                    .font(Self.monoFont(size: 10.0, weight: .medium))
                     .foregroundStyle(accent)
-            }
-
-            if !sessionTitle.isEmpty {
-                Text(sessionTitle)
-                    .font(.system(size: 11.5, weight: .medium, design: .rounded))
-                    .foregroundStyle(Color.white.opacity(0.95))
                     .lineLimit(1)
-                    .truncationMode(.tail)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .frame(maxWidth: 230)
+        .padding(edgeInset)
+        .frame(maxWidth: 240, alignment: .leading)
+        .fixedSize(horizontal: true, vertical: true)
         .background(
             ZStack {
-                Capsule(style: .continuous)
-                    .fill(Color(red: 0.03, green: 0.04, blue: 0.08).opacity(0.88))
+                shape
+                    .fill(Color(red: 0.02, green: 0.03, blue: 0.06).opacity(0.92))
 
-                Capsule(style: .continuous)
+                shape
                     .fill(
                         LinearGradient(
                             colors: [
@@ -839,21 +843,21 @@ struct OrbInfoBadgeView: View {
             }
         )
         .overlay(
-            Capsule(style: .continuous)
+            shape
                 .stroke(
                     LinearGradient(
                         colors: [
-                            warm.opacity(0.65),
-                            Color.white.opacity(0.55),
+                            warm.opacity(0.62),
+                            Color.white.opacity(0.50),
                             accent.opacity(0.75)
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     ),
-                    lineWidth: 1.0
+                    lineWidth: 1.1
                 )
         )
-        .shadow(color: Color.black.opacity(0.38), radius: 10, y: 4)
+        .shadow(color: Color.black.opacity(0.35), radius: 9, y: 4)
     }
 }
 
