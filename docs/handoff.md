@@ -49,7 +49,13 @@ Technical reference: [Orb animation and session orbs](orb-and-sessions.md)
    - Added independent selectors and interactive colour swatches in **Ajustes → Color del halo por agente** (`codexTheme`, `claudeTheme`, `openCodeTheme`).
 3. **Click an orb to focus its terminal.**
    - `CodexSessionsMonitor.resumedSessionPIDs` records the process ID for `codex resume` sessions alongside Claude Code and OpenCode window processes.
-   - While hovered, only that orb's panel enables mouse hit-testing (`setInteractive(true)`). Clicking the orb resolves its controlling TTY (`proc_pidinfo` + `devname`) and activates the exact window and tab in `Terminal.app` or `iTerm2`.
+   - While hovered, only that orb's panel enables mouse hit-testing (`setInteractive(true)`). Clicking the orb resolves its controlling TTY (`proc_pidinfo` + `devname`) and activates the exact window and tab in `Terminal.app` or `iTerm2` (`NSAppleEventsUsageDescription` in `app/Info.plist`).
+4. **Fused hover info chip (`OrbInfoBadgeView`).**
+   - While hovered (and when `settings.showHoverInfo` is enabled in **Ajustes → Animación → Mostrar información de la sesión al pasar el cursor**), a liquid-glass chip unfolds directly fused to the orb without separating (`hoverBadge` `SmoothBlend`, 14 pt inner breathing margin from the orb rim).
+   - Displays the session title on top (`~/.codex/session_index.jsonl` `thread_name`, Claude Code transcript summary/title, or OpenCode project folder) and the agent indicator + name below, left-aligned in a Consolas-style monospaced font.
+5. **Vertical side columns, multi-display selection and global hotkeys.**
+   - Added `.left` (`Izquierda al centro (Columna)`) and `.right` (`Derecha al centro (Columna)`) vertical column layouts alongside `.top`, `.bottom`, `.center` and `.corner`.
+   - Added Carbon global hotkeys (`RegisterEventHotKey`, no Accessibility permission required): `⌃⌥P` (`PositionShortcut`) to cycle orb positions smoothly, and `⌃⌥M` (`ScreenShortcut`) to send the orbs to the next connected display, plus explicit display selection in **Ajustes → Animación → Pantalla** (`targetDisplay`).
 
 ## 3. Resume work
 
@@ -98,21 +104,17 @@ Session orbs reappear within 2 s: Codex `resume` clients and every Claude Code a
 
 Ordered by priority. Each one should be verified the way this work was: tests, frame sheets for animation, live checks in the app.
 
-1. **Commit the work** in the groups listed in section 1, after the user agrees.
-2. **Display selection (roadmap, high).** Add a setting (menu bar screen, pointer screen, active screen) and feed it into `rowScreen` in `AppDelegate.arrangeSessions`. Animate the row moving to another screen (shrink out, grow in) instead of snapping. *Acceptance:* with two displays the row always appears on the chosen screen, as one row, and moves when the setting changes.
-3. **Unit tests for the session registry.** Extract the bookkeeping in `AppDelegate` (session orbs, owners, `handOver`, deferred ends, OpenCode folders and orphans, speech routing) into a type without AppKit and test it. Today it is verified only live.
-4. **Tell orbs apart.** The user cannot see which orb is which session or agent. Options: a subtle per-agent accent on the rim, a hover label with the project folder (panels ignore the mouse today), or a click that focuses the agent's terminal. Ask the user before choosing.
-5. **Lower idle cost.** The SwiftUI view graph is now the main cost, about 4 % CPU per waiting orb. Options:
+1. **Unit tests for the session registry.** Extract the bookkeeping in `AppDelegate` (session orbs, owners, `handOver`, deferred ends, OpenCode folders and orphans, speech routing) into a type without AppKit and test it. Today it is verified only live.
+2. **Lower idle cost.** The SwiftUI view graph is now the main cost, about 4 % CPU per waiting orb. Options:
    - Draw the background gradients inside the beam canvas.
    - Lower the waiting frame rate when many orbs are visible.
    - Move to a Core Animation or Metal renderer, without changing the look.
 
    Measure with `sample` and with in-app frame counts.
-6. **Reduced motion.** Respect `NSWorkspace.shared.accessibilityDisplayShouldReduceMotion`: slower spin, no sweep, shorter morphs.
-7. **Codex orbs that follow the terminal.** Check whether Codex hooks run under the terminal's `codex` process. If they do, report its PID like Claude Code so a closed terminal removes its orb.
-8. **OpenCode details.**
+3. **Reduced motion.** Respect `NSWorkspace.shared.accessibilityDisplayShouldReduceMotion`: slower spin, no sweep, shorter morphs.
+4. **Codex orbs that follow the terminal.** Check whether Codex hooks run under the terminal's `codex` process. If they do, report its PID like Claude Code so a closed terminal removes its orb.
+5. **OpenCode details.**
    - Verify the real `session.created` payload; only the mocked test covers it.
    - If prompts expose a client id, use it to tell apart windows in the same folder.
-9. **Claude Code one-shot runs.** Decide with the user whether `claude -p` runs should show an orb at all; the hook PID's process arguments can tell them apart.
-10. **Long rows.** Add a compact mode or a cap when many sessions are open, and animate wrapping into a second row.
-11. **Windows parity.** The Windows app has none of these features.
+6. **Claude Code one-shot runs.** Decide with the user whether `claude -p` runs should show an orb at all; the hook PID's process arguments can tell them apart.
+7. **Windows parity.** The Windows app has none of these features.

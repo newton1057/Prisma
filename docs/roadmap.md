@@ -95,3 +95,4 @@ Check `/health` on the port in `runtime.json`, toggle and adjust **Ajustes → A
 | 2026-11-01 | Claude Code orbs owned by the window process | Keeps the orb through `/clear` and `/resume` and removes it when the window closes |
 | 2026-11-01 | Compact inactive orbs (0.34 scale, 50% opacity) vs active/hovered orbs (0.50 scale, 95% opacity) | Keeps many session orbs unobtrusive and lets the user see behind them while highlighting active or hovered orbs |
 | 2026-11-01 | Per-agent halo themes (10 palettes) and click-to-focus terminal via TTY | Lets the user tell Codex, Claude Code, and OpenCode orbs apart at a glance and jump straight to any session's terminal tab |
+| 2026-11-01 | Fused hover info chip, vertical side columns, display selection, and global hotkeys (`⌃⌥P`, `⌃⌥M`) | Shows session title + agent on hover fused to the orb, supports left/right vertical columns, and switches positions or monitors from any app |
