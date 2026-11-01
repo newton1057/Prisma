@@ -5,7 +5,7 @@
 import SwiftUI
 import AppKit
 
-enum OverlayPosition { case top, bottom, center, corner }
+enum OverlayPosition { case top, left, right, bottom, center, corner }
 
 /// ImageRenderer cannot draw NSVisualEffectView; render.sh swaps the app's
 /// VisualEffectBlur for this dark stand-in of the `.hudWindow` material.

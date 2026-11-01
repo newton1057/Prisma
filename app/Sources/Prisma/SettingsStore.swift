@@ -66,6 +66,8 @@ enum ReadMode: String, CaseIterable, Identifiable {
 
 enum OverlayPosition: String, CaseIterable, Identifiable {
     case top
+    case left
+    case right
     case bottom
     case center
     case corner
@@ -74,8 +76,10 @@ enum OverlayPosition: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .top: return "Arriba al centro"
-        case .bottom: return "Abajo al centro"
+        case .top: return "Arriba al centro (Fila)"
+        case .left: return "Izquierda al centro (Columna)"
+        case .right: return "Derecha al centro (Columna)"
+        case .bottom: return "Abajo al centro (Fila)"
         case .center: return "Centro de pantalla"
         case .corner: return "Esquina inferior derecha"
         }

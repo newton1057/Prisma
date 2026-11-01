@@ -639,6 +639,14 @@ struct OverlayView: View {
             let y: CGFloat = -26.0 - inv * 68.0
             return (0, y, sx, sy, .top)
 
+        case .left:
+            let x: CGFloat = -111.0 - inv * 34.0
+            return (x, 0, sy, sx, .leading)
+
+        case .right:
+            let x: CGFloat = 111.0 + inv * 34.0
+            return (x, 0, sy, sx, .trailing)
+
         case .bottom:
             let y: CGFloat = 52.0 + inv * 32.0
             return (0, y, sx, sy, .bottom)

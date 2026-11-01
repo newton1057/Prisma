@@ -234,6 +234,12 @@ final class OverlayController {
             // Top edge of panel is flush with the physical top border of the screen (frame.maxY)
             // so the orb emerges directly out of the top screen border and retracts back into it.
             origin = NSPoint(x: frame.midX - size.width / 2, y: frame.maxY - size.height)
+        case .left:
+            // Left edge of panel is flush with the left border of the screen (frame.minX)
+            origin = NSPoint(x: frame.minX, y: frame.midY - size.height / 2)
+        case .right:
+            // Right edge of panel is flush with the right border of the screen (frame.maxX)
+            origin = NSPoint(x: frame.maxX - size.width, y: frame.midY - size.height / 2)
         case .bottom:
             // Bottom edge of panel is flush with the bottom border of the screen (frame.minY)
             origin = NSPoint(x: frame.midX - size.width / 2, y: frame.minY)
@@ -246,21 +252,38 @@ final class OverlayController {
         // The panels have transparent margins; position the visible circles,
         // not the edges of those larger panels, next to one another. Active
         // orbs claim a wider slot so their neighbours slide aside smoothly.
-        let columns = max(1, Int((frame.width - 20) / Self.activeSpacing))
-        let row = rowIndex / columns
-        let first = row * columns
-        let count = min(columns, rowCount - first)
-        let column = rowIndex - first
-        let widths = (first ..< first + count).map { index in
-            index < rowSlotWidths.count ? rowSlotWidths[index] : Self.inactiveSpacing
+        let horizontal: CGFloat
+        let vertical: CGFloat
+        if settings.position == .left || settings.position == .right {
+            let rowsPerColumn = max(1, Int((frame.height - 60) / Self.activeSpacing))
+            let col = rowIndex / rowsPerColumn
+            let first = col * rowsPerColumn
+            let count = min(rowsPerColumn, rowCount - first)
+            let item = rowIndex - first
+            let heights = (first ..< first + count).map { index in
+                index < rowSlotWidths.count ? rowSlotWidths[index] : Self.inactiveSpacing
+            }
+            let totalHeight = heights.reduce(0, +)
+            let fromTop = heights.prefix(item).reduce(0, +) + (heights.indices.contains(item) ? heights[item] / 2 : 0)
+            vertical = totalHeight / 2 - fromTop
+            horizontal = CGFloat(col) * Self.activeSpacing * (settings.position == .left ? 1 : -1)
+        } else {
+            let columns = max(1, Int((frame.width - 20) / Self.activeSpacing))
+            let row = rowIndex / columns
+            let first = row * columns
+            let count = min(columns, rowCount - first)
+            let column = rowIndex - first
+            let widths = (first ..< first + count).map { index in
+                index < rowSlotWidths.count ? rowSlotWidths[index] : Self.inactiveSpacing
+            }
+            let totalWidth = widths.reduce(0, +)
+            let centerInRow = widths.prefix(column).reduce(0, +) + (widths.indices.contains(column) ? widths[column] / 2 : 0)
+            let lastHalf = (widths.last ?? Self.inactiveSpacing) / 2
+            horizontal = settings.position == .corner
+                ? centerInRow - (totalWidth - lastHalf)
+                : centerInRow - totalWidth / 2
+            vertical = CGFloat(row) * Self.activeSpacing * (settings.position == .bottom || settings.position == .corner ? 1 : -1)
         }
-        let totalWidth = widths.reduce(0, +)
-        let centerInRow = widths.prefix(column).reduce(0, +) + (widths.indices.contains(column) ? widths[column] / 2 : 0)
-        let lastHalf = (widths.last ?? Self.inactiveSpacing) / 2
-        let horizontal = settings.position == .corner
-            ? centerInRow - (totalWidth - lastHalf)
-            : centerInRow - totalWidth / 2
-        let vertical = CGFloat(row) * Self.activeSpacing * (settings.position == .bottom || settings.position == .corner ? 1 : -1)
         let target = NSPoint(x: origin.x + horizontal, y: origin.y + vertical)
 
         let current = panel.frame.origin
@@ -295,6 +318,10 @@ final class OverlayController {
         switch settings.position {
         case .top:
             center = NSPoint(x: panel.frame.minX + 230, y: panel.frame.minY + 305 - radius)
+        case .left:
+            center = NSPoint(x: panel.frame.minX + 20 + radius, y: panel.frame.minY + 180)
+        case .right:
+            center = NSPoint(x: panel.frame.minX + 440 - radius, y: panel.frame.minY + 180)
         case .bottom:
             center = NSPoint(x: panel.frame.minX + 230, y: panel.frame.minY + 29 + radius)
         case .corner:
