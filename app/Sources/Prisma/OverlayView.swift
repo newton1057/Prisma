@@ -721,7 +721,7 @@ struct OrbInfoBadgeView: View {
 
         switch position {
         case .left:
-            chipCard(edgeInset: .init(top: 7, leading: 26, bottom: 7, trailing: 13))
+            chipCard(edgeInset: .init(top: 8, leading: 36, bottom: 8, trailing: 15))
                 .scaleEffect(
                     x: grow * (1.0 + stretch),
                     y: cross,
@@ -732,7 +732,7 @@ struct OrbInfoBadgeView: View {
                 .frame(width: 460, height: 360, alignment: .leading)
 
         case .right:
-            chipCard(edgeInset: .init(top: 7, leading: 13, bottom: 7, trailing: 26))
+            chipCard(edgeInset: .init(top: 8, leading: 15, bottom: 8, trailing: 36))
                 .scaleEffect(
                     x: grow * (1.0 + stretch),
                     y: cross,
@@ -743,7 +743,7 @@ struct OrbInfoBadgeView: View {
                 .frame(width: 460, height: 360, alignment: .trailing)
 
         case .bottom:
-            chipCard(edgeInset: .init(top: 8, leading: 13, bottom: 20, trailing: 13))
+            chipCard(edgeInset: .init(top: 10, leading: 14, bottom: 30, trailing: 14))
                 .scaleEffect(
                     x: cross,
                     y: grow * (1.0 + stretch),
@@ -754,7 +754,7 @@ struct OrbInfoBadgeView: View {
                 .frame(width: 460, height: 360, alignment: .bottom)
 
         case .corner:
-            chipCard(edgeInset: .init(top: 8, leading: 13, bottom: 20, trailing: 13))
+            chipCard(edgeInset: .init(top: 10, leading: 14, bottom: 30, trailing: 14))
                 .scaleEffect(
                     x: cross,
                     y: grow * (1.0 + stretch),
@@ -766,7 +766,7 @@ struct OrbInfoBadgeView: View {
                 .frame(width: 460, height: 360, alignment: .bottom)
 
         case .center:
-            chipCard(edgeInset: .init(top: 20, leading: 13, bottom: 8, trailing: 13))
+            chipCard(edgeInset: .init(top: 30, leading: 14, bottom: 10, trailing: 14))
                 .scaleEffect(
                     x: cross,
                     y: grow * (1.0 + stretch),
@@ -777,7 +777,7 @@ struct OrbInfoBadgeView: View {
                 .frame(width: 460, height: 360, alignment: .top)
 
         case .top:
-            chipCard(edgeInset: .init(top: 20, leading: 13, bottom: 8, trailing: 13))
+            chipCard(edgeInset: .init(top: 30, leading: 14, bottom: 10, trailing: 14))
                 .scaleEffect(
                     x: cross,
                     y: grow * (1.0 + stretch),
