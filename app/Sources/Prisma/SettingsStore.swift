@@ -292,6 +292,10 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(showThinking, forKey: Keys.showThinking) }
     }
 
+    @Published var showHoverInfo: Bool {
+        didSet { defaults.set(showHoverInfo, forKey: Keys.showHoverInfo) }
+    }
+
     @Published var stayVisible: Bool {
         didSet { defaults.set(stayVisible, forKey: Keys.stayVisible) }
     }
@@ -328,6 +332,7 @@ final class SettingsStore: ObservableObject {
         static let claudeTheme = "claudeTheme"
         static let openCodeTheme = "openCodeTheme"
         static let showThinking = "showThinking"
+        static let showHoverInfo = "showHoverInfo"
         static let stayVisible = "stayVisible"
         static let duckAudio = "duckAudio"
         static let duckLevel = "duckLevel"
@@ -356,6 +361,7 @@ final class SettingsStore: ObservableObject {
         claudeTheme = HaloTheme(rawValue: defaults.string(forKey: Keys.claudeTheme) ?? "") ?? .solar
         openCodeTheme = HaloTheme(rawValue: defaults.string(forKey: Keys.openCodeTheme) ?? "") ?? .aurora
         showThinking = defaults.object(forKey: Keys.showThinking) as? Bool ?? true
+        showHoverInfo = defaults.object(forKey: Keys.showHoverInfo) as? Bool ?? true
         stayVisible = defaults.object(forKey: Keys.stayVisible) as? Bool ?? true
         duckAudio = defaults.object(forKey: Keys.duckAudio) as? Bool ?? true
         duckLevel = defaults.object(forKey: Keys.duckLevel) as? Double ?? 0.35

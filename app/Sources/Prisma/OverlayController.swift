@@ -58,6 +58,7 @@ final class OverlayController {
     private var orderOutWorkItem: DispatchWorkItem?
     private var positionCancellable: AnyCancellable?
     private var themeCancellable: AnyCancellable?
+    private var hoverInfoCancellable: AnyCancellable?
     private var transitionID: Int = 0
     private var glideLink: CADisplayLink?
     var keepsVisible = false
@@ -87,6 +88,7 @@ final class OverlayController {
         self.settings = settings
         self.model.position = settings.position
         self.model.haloTheme = settings.theme(for: agentSource)
+        self.model.showHoverInfo = settings.showHoverInfo
         self.positionCancellable = settings.$position
             .dropFirst()
             .receive(on: DispatchQueue.main)
@@ -107,6 +109,11 @@ final class OverlayController {
         .sink { [weak self] _ in
             self?.updateTheme()
         }
+        self.hoverInfoCancellable = settings.$showHoverInfo
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] enabled in
+                self?.model.showHoverInfo = enabled
+            }
     }
 
     private func updateTheme() {

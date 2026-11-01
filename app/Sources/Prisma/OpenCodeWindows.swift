@@ -72,7 +72,7 @@ enum OpenCodeWindows {
         return Int32(bitPattern: info.pbi_ppid)
     }
 
-    private static func workingDirectory(of pid: Int32) -> String? {
+    static func workingDirectory(of pid: Int32) -> String? {
         var info = proc_vnodepathinfo()
         let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
         guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return nil }

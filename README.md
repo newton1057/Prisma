@@ -24,7 +24,7 @@ An animated floating orb appears with each notification. Prisma can also lower b
 - **Summaries made for listening.** Agents are instructed to add a short voice block to their responses; Prisma extracts and cleans it before speaking.
 - **A choice of voices.** Use Edge Neural TTS, local Piper, or a system voice. The default is Ava Multilingual; if Edge fails, Prisma tries Piper and then the system voice.
 - **Configurable orb.** Choose its position, whether it remains visible briefly after speaking, and independent halo color themes (10 palettes) for Codex, Claude Code, and OpenCode.
-- **Interactive session orbs (macOS).** Waiting orbs stay compact and semi-transparent (50% opacity) so you can see behind them, expand individually to 95% opacity when thinking, speaking, or hovered, and focus their exact terminal window and tab when clicked.
+- **Interactive session orbs (macOS).** Waiting orbs stay compact and semi-transparent (50% opacity) so you can see behind them, expand individually to 95% opacity when thinking, speaking, or hovered, unfold a liquid-glass info capsule with the agent name and session title on hover, and focus their exact terminal window and tab when clicked.
 - **Adjustable background audio.** Temporarily lower background audio while Prisma speaks, or disable ducking altogether.
 
 ## Requirements

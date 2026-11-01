@@ -227,6 +227,8 @@ struct OrbFrame {
     var opacity: Double = OverlayModel.activeOpacity
     /// Selected color theme for the halo across all states.
     var theme: HaloTheme = .prisma
+    /// 0...1 progress of the hover info capsule emerging from the orb.
+    var hover: Double = 0
 }
 
 /// Quintic Hermite blend. Retargeting keeps value, velocity and acceleration
@@ -365,6 +367,11 @@ final class OverlayModel: ObservableObject {
     @Published var isHovered = false {
         didSet { if oldValue != isHovered { stateChanged() } }
     }
+    @Published var showHoverInfo = true {
+        didSet { if oldValue != showHoverInfo { stateChanged() } }
+    }
+    @Published var agentTitle: String = ""
+    @Published var sessionTitle: String = ""
     /// Read by the animation timeline on every frame. Not published, so the
     /// 30 Hz meter does not add redraws between the evenly spaced frames.
     var audioLevel: Double = 0
@@ -386,6 +393,7 @@ final class OverlayModel: ObservableObject {
     private var pose = SmoothBlend(SIMD3<Double>(1, 0, 0))
     private var talking = SmoothBlend(SIMD2<Double>(0, 0))
     private var activity = SmoothBlend(SIMD2<Double>(1, 0))
+    private var hoverBadge = SmoothBlend(SIMD2<Double>(0, 0))
     private var lastActive = true
     private var motion = OrbMotion()
     private var morphGeneration = 0
@@ -412,6 +420,7 @@ final class OverlayModel: ObservableObject {
         let talk = SIMD2<Double>(isSpeaking ? 1 : 0, 0)
         let activeNow = isActive
         let active = SIMD2<Double>(activeNow ? 1 : 0, 0)
+        let hoverTarget = SIMD2<Double>((isHovered && showHoverInfo) ? 1 : 0, 0)
         let activeChanged = activeNow != lastActive
         lastActive = activeNow
         guard visible else {
@@ -419,6 +428,7 @@ final class OverlayModel: ObservableObject {
             self.pose.snap(to: pose, at: now)
             talking.snap(to: talk, at: now)
             activity.snap(to: active, at: now)
+            hoverBadge.snap(to: hoverTarget, at: now)
             if activeChanged { onActiveChange?() }
             return
         }
@@ -433,6 +443,11 @@ final class OverlayModel: ObservableObject {
         if active != activity.target {
             let duration = activeNow ? 0.45 : 0.58
             activity.retarget(to: active, at: now, duration: duration)
+            markMorphing(for: duration)
+        }
+        if hoverTarget != hoverBadge.target {
+            let duration = hoverTarget.x > 0.5 ? 0.46 : 0.36
+            hoverBadge.retarget(to: hoverTarget, at: now, duration: duration)
             markMorphing(for: duration)
         }
         if activeChanged {
@@ -500,6 +515,7 @@ final class OverlayModel: ObservableObject {
         let total = max(1e-6, weights.x + weights.y + weights.z)
         weights /= total
         let speaking = min(1, max(0, talking.sample(at: time).value.x))
+        let hover = min(1, max(0, hoverBadge.sample(at: time).value.x))
         motion.advance(to: time, pose: weights, audioTarget: isSpeaking ? audioLevel : 0)
         return OrbFrame(
             time: time,
@@ -513,7 +529,8 @@ final class OverlayModel: ObservableObject {
             idlePhase: idlePhase,
             scale: currentScale(at: time),
             opacity: currentOpacity(at: time),
-            theme: haloTheme
+            theme: haloTheme,
+            hover: hover
         )
     }
 
@@ -603,18 +620,31 @@ struct OverlayView: View {
             let slide = edgeTransform(for: model.position, presentation: presentation)
             let frame = model.frame(at: time)
 
-            SiriLiquidGlassOrbView(frame: frame)
-                .accessibilityLabel(model.isThinking ? "Prisma está pensando" : "Prisma")
-                .scaleEffect(frame.scale, anchor: slide.anchor)
-                .scaleEffect(
-                    x: slide.scaleX,
-                    y: slide.scaleY,
-                    anchor: slide.anchor
-                )
-                .offset(x: slide.offsetX, y: slide.offsetY)
-                .frame(width: 460, height: 360)
-                .clipped()
-                .opacity(model.visible ? frame.opacity * min(1, presentation * 12) : 0)
+            ZStack {
+                if frame.hover > 0.002 && !model.agentTitle.isEmpty {
+                    OrbInfoBadgeView(
+                        agentTitle: model.agentTitle,
+                        sessionTitle: model.sessionTitle,
+                        theme: frame.theme,
+                        position: model.position,
+                        orbScale: CGFloat(frame.scale),
+                        hover: CGFloat(frame.hover)
+                    )
+                }
+
+                SiriLiquidGlassOrbView(frame: frame)
+                    .accessibilityLabel(model.isThinking ? "Prisma está pensando" : "Prisma")
+                    .scaleEffect(frame.scale, anchor: slide.anchor)
+                    .scaleEffect(
+                        x: slide.scaleX,
+                        y: slide.scaleY,
+                        anchor: slide.anchor
+                    )
+                    .offset(x: slide.offsetX, y: slide.offsetY)
+            }
+            .frame(width: 460, height: 360)
+            .clipped()
+            .opacity(model.visible ? frame.opacity * min(1, presentation * 12) : 0)
         }
     }
 
@@ -660,6 +690,170 @@ struct OverlayView: View {
             let y: CGFloat = -inv * 12.0
             return (0, y, sx, sy, .top)
         }
+    }
+}
+
+/// Liquid-glass capsule that emerges from the orb container while hovered,
+/// showing which agent and session the orb belongs to.
+struct OrbInfoBadgeView: View {
+    let agentTitle: String
+    let sessionTitle: String
+    let theme: HaloTheme
+    let position: OverlayPosition
+    let orbScale: CGFloat
+    let hover: CGFloat
+
+    var body: some View {
+        let p = min(1, max(0, hover))
+        let inv = 1.0 - p
+        let r = 99.0 * orbScale
+        let stretch = 0.16 * sin(p * .pi) * pow(inv, 0.5)
+        let baseScale = 0.22 + 0.78 * p
+
+        switch position {
+        case .left:
+            badgeCard
+                .scaleEffect(
+                    x: baseScale * (1.0 + stretch),
+                    y: baseScale * (1.0 - stretch * 0.35),
+                    anchor: .leading
+                )
+                .blur(radius: 5.5 * inv)
+                .opacity(Double(min(1, p * 1.35)))
+                .padding(.leading, (20 + r) * inv + (20 + 2 * r + 10) * p)
+                .frame(width: 460, height: 360, alignment: .leading)
+
+        case .right:
+            badgeCard
+                .scaleEffect(
+                    x: baseScale * (1.0 + stretch),
+                    y: baseScale * (1.0 - stretch * 0.35),
+                    anchor: .trailing
+                )
+                .blur(radius: 5.5 * inv)
+                .opacity(Double(min(1, p * 1.35)))
+                .padding(.trailing, (20 + r) * inv + (20 + 2 * r + 10) * p)
+                .frame(width: 460, height: 360, alignment: .trailing)
+
+        case .bottom:
+            let y = (151 - r) * inv + (151 - 2 * r - 30) * p
+            badgeCard
+                .scaleEffect(
+                    x: baseScale * (1.0 - stretch * 0.35),
+                    y: baseScale * (1.0 + stretch),
+                    anchor: .bottom
+                )
+                .blur(radius: 5.5 * inv)
+                .opacity(Double(min(1, p * 1.35)))
+                .offset(x: 0, y: y)
+
+        case .corner:
+            let x = (141 - r) * inv + (141 - r - 24) * p
+            let y = (151 - r) * inv + (151 - 2 * r - 30) * p
+            badgeCard
+                .scaleEffect(
+                    x: baseScale * (1.0 - stretch * 0.35),
+                    y: baseScale * (1.0 + stretch),
+                    anchor: .bottom
+                )
+                .blur(radius: 5.5 * inv)
+                .opacity(Double(min(1, p * 1.35)))
+                .offset(x: x, y: y)
+
+        case .center:
+            let y = (-99 + r) * inv + (-99 + 2 * r + 30) * p
+            badgeCard
+                .scaleEffect(
+                    x: baseScale * (1.0 - stretch * 0.35),
+                    y: baseScale * (1.0 + stretch),
+                    anchor: .top
+                )
+                .blur(radius: 5.5 * inv)
+                .opacity(Double(min(1, p * 1.35)))
+                .offset(x: 0, y: y)
+
+        case .top:
+            let y = (-125 + r) * inv + (-125 + 2 * r + 30) * p
+            badgeCard
+                .scaleEffect(
+                    x: baseScale * (1.0 - stretch * 0.35),
+                    y: baseScale * (1.0 + stretch),
+                    anchor: .top
+                )
+                .blur(radius: 5.5 * inv)
+                .opacity(Double(min(1, p * 1.35)))
+                .offset(x: 0, y: y)
+        }
+    }
+
+    private var badgeCard: some View {
+        let pal = theme.palette
+        let accent = Color(red: pal.lowerMid.x, green: pal.lowerMid.y, blue: pal.lowerMid.z)
+        let warm = Color(red: pal.upperBright.x, green: pal.upperBright.y, blue: pal.upperBright.z)
+        return VStack(spacing: 2) {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [warm, accent],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 6, height: 6)
+                    .shadow(color: accent.opacity(0.8), radius: 3)
+
+                Text(agentTitle.uppercased())
+                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                    .tracking(1.1)
+                    .foregroundStyle(accent)
+            }
+
+            if !sessionTitle.isEmpty {
+                Text(sessionTitle)
+                    .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.95))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(maxWidth: 230)
+        .background(
+            ZStack {
+                Capsule(style: .continuous)
+                    .fill(Color(red: 0.03, green: 0.04, blue: 0.08).opacity(0.88))
+
+                Capsule(style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                warm.opacity(0.18),
+                                accent.opacity(0.22)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        colors: [
+                            warm.opacity(0.65),
+                            Color.white.opacity(0.55),
+                            accent.opacity(0.75)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1.0
+                )
+        )
+        .shadow(color: Color.black.opacity(0.38), radius: 10, y: 4)
     }
 }
 

@@ -105,6 +105,7 @@ struct SettingsView: View {
                 }
 
                 Toggle("Mostrar el orbe mientras el agente piensa", isOn: $settings.showThinking)
+                Toggle("Mostrar información de la sesión al pasar el cursor", isOn: $settings.showHoverInfo)
                 Toggle("Mantener el orbe un momento al terminar", isOn: $settings.stayVisible)
             }
 

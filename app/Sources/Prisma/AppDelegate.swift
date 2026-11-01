@@ -52,6 +52,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var openCodeOrbs: Set<String> = []
     private var orbFolders: [String: String] = [:]
     private var orbActivity: [String: Date] = [:]
+    private var codexTitleCache: [String: String] = [:]
+    private var codexIndexMTime: Date?
+    private var claudeTitleCache: [String: String] = [:]
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private var hoverTimer: DispatchSourceTimer?
@@ -295,6 +298,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openCodeOrbs.insert(id)
             orbActivity[id] = Date()
             if let folder { orbFolders[id] = folder }
+            if let target = sessionOverlays[id] {
+                updateOrbMetadata(id, target: target)
+            }
         }
         if sessionOverlays[id] != nil { return ensureSession(id, source: "opencode") }
         let candidates = openCodeOrbs.filter { key in
@@ -365,6 +371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let existing = sessionOverlays[id] {
             if let source, !source.isEmpty { existing.agentSource = source }
             if let owner { sessionProcesses[id] = owner }
+            updateOrbMetadata(id, target: existing)
             return existing
         }
         // The same agent window moved on to another conversation (/clear,
@@ -373,6 +380,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            let previous = sessionProcesses.first(where: { $0.value == owner && canHandOver($0.key) })?.key,
            let target = handOver(previous, to: id) {
             target.agentSource = resolvedSource
+            updateOrbMetadata(id, target: target)
             return target
         }
         let target = OverlayController(settings: settings)
@@ -393,6 +401,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sessionOverlays[id] = target
         sessionOrder.append(id)
         if let owner { sessionProcesses[id] = owner }
+        updateOrbMetadata(id, target: target)
         arrangeSessions()
         target.show()
         return target
@@ -537,10 +546,143 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for (id, target) in sessionOverlays {
             let hovered = (id == closestID)
             if target.model.isHovered != hovered {
+                if hovered {
+                    updateOrbMetadata(id, target: target)
+                }
                 target.model.isHovered = hovered
             }
             target.setInteractive(hovered)
         }
+    }
+
+    private func updateOrbMetadata(_ id: String, target: OverlayController) {
+        let source = target.agentSource ?? "codex"
+        let agentName: String
+        switch source {
+        case "codex": agentName = "Codex"
+        case "claude-code": agentName = "Claude Code"
+        case "opencode": agentName = "OpenCode"
+        default: agentName = "Prisma"
+        }
+        if target.model.agentTitle != agentName {
+            target.model.agentTitle = agentName
+        }
+
+        let pid = sessionProcesses[id] ?? codexProcesses[id]
+        let folder = pid.flatMap { openCodeWindows[$0] ?? OpenCodeWindows.workingDirectory(of: $0) } ?? orbFolders[id]
+        let folderName = folder.map { URL(fileURLWithPath: $0).lastPathComponent }.flatMap { $0.isEmpty ? nil : $0 }
+
+        let title: String
+        switch source {
+        case "codex":
+            refreshCodexTitleCacheIfNeeded()
+            if let threadName = codexTitleCache[id.lowercased()], !threadName.isEmpty {
+                title = threadName
+            } else if let folderName {
+                title = folderName
+            } else {
+                title = String(id.prefix(8))
+            }
+        case "claude-code":
+            if let claudeTitle = resolveClaudeTitle(for: id), !claudeTitle.isEmpty {
+                title = claudeTitle
+            } else if let folderName {
+                title = folderName
+            } else {
+                title = id.hasPrefix("claude:") ? "Sesión activa" : String(id.prefix(8))
+            }
+        case "opencode":
+            if let folderName {
+                title = folderName
+            } else {
+                title = "Sesión activa"
+            }
+        default:
+            title = folderName ?? ""
+        }
+        if target.model.sessionTitle != title {
+            target.model.sessionTitle = title
+        }
+    }
+
+    private func refreshCodexTitleCacheIfNeeded() {
+        let indexURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/session_index.jsonl")
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: indexURL.path),
+              let mtime = attrs[.modificationDate] as? Date else { return }
+        if let last = codexIndexMTime, last == mtime, !codexTitleCache.isEmpty { return }
+        codexIndexMTime = mtime
+        guard let content = try? String(contentsOf: indexURL, encoding: .utf8) else { return }
+        var map: [String: String] = [:]
+        for line in content.split(separator: "\n") {
+            guard let data = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let id = (obj["id"] as? String)?.lowercased(),
+                  let name = (obj["thread_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !name.isEmpty else { continue }
+            map[id] = name
+        }
+        codexTitleCache = map
+    }
+
+    private func resolveClaudeTitle(for id: String) -> String? {
+        guard !id.hasPrefix("claude:") else { return nil }
+        if let cached = claudeTitleCache[id] { return cached }
+        let projectsRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/projects")
+        guard let dirs = try? FileManager.default.contentsOfDirectory(
+            at: projectsRoot,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+        for dir in dirs {
+            let file = dir.appendingPathComponent("\(id).jsonl")
+            guard FileManager.default.fileExists(atPath: file.path),
+                  let handle = try? FileHandle(forReadingFrom: file) else { continue }
+            defer { try? handle.close() }
+            let data = (try? handle.read(upToCount: 49_152)) ?? Data()
+            let text = String(decoding: data, as: UTF8.self)
+            var found: String?
+            for line in text.split(separator: "\n") {
+                guard let lineData = line.data(using: .utf8),
+                      let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else { continue }
+                if let custom = (obj["customTitle"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !custom.isEmpty {
+                    found = custom
+                    break
+                }
+                if let summary = (obj["summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
+                    found = summary
+                    break
+                }
+                if found == nil,
+                   (obj["type"] as? String) == "user",
+                   let message = obj["message"] as? [String: Any],
+                   let raw = message["content"] as? String {
+                    let cleaned = Self.cleanPromptTitle(raw)
+                    if !cleaned.isEmpty { found = cleaned }
+                }
+            }
+            if let found {
+                claudeTitleCache[id] = found
+                return found
+            }
+        }
+        return nil
+    }
+
+    private static func cleanPromptTitle(_ raw: String) -> String {
+        if raw.contains("<local-command-") || raw.contains("<command-name>") { return "" }
+        let stripped = raw.replacingOccurrences(
+            of: #"<[^>]+>"#,
+            with: " ",
+            options: .regularExpression
+        )
+        let line = stripped
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty } ?? ""
+        if line.count <= 42 { return line }
+        return String(line.prefix(40)).trimmingCharacters(in: .whitespaces) + "…"
     }
 
     private func handleScreenClick() {
