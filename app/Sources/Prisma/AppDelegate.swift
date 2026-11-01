@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Combine
+import Darwin
 
 final class AppState: ObservableObject {
     @Published var serverRunning = false
@@ -23,7 +24,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var overlay: OverlayController!
     private var speech: SpeechController!
     private var server: HTTPServer?
+    private var thinkingSession: String?
+    private var thinkingTimeout: DispatchWorkItem?
     private var terminateSignalSource: DispatchSourceSignal?
+    private var sessionOverlays: [String: OverlayController] = [:]
+    private var sessionOrder: [String] = []
+    private var speechQueue: [SpeakRequest] = []
+    private var activeSpeechSession: String?
+    private var isSpeaking = false
+    private var closingSessions: Set<String> = []
+    private var resumedSessions: Set<String> = []
+    private var sessionMonitor: DispatchSourceTimer?
+    /// Agents whose sessions get their own persistent orb in the row.
+    private let sessionSources: Set<String> = ["codex", "claude-code", "opencode"]
+    /// Agent process behind each Claude Code and OpenCode orb, so the orb
+    /// follows its window to a new conversation and leaves when it closes.
+    private var sessionProcesses: [String: Int32] = [:]
+    private var codexProcesses: [String: Int32] = [:]
+    private var lastClickTime: TimeInterval = 0
+    /// Ends wait a moment in case the same window continues (/clear, /resume).
+    private var pendingEnds: [String: DispatchWorkItem] = [:]
+    /// Claude Code transcripts watched while thinking: it has no interrupt hook.
+    private var thinkingTranscripts: [String: (path: String, offset: UInt64)] = [:]
+    /// Open OpenCode windows (process → folder) and the orbs that belong to OpenCode.
+    private var openCodeWindows: [Int32: String] = [:]
+    private var openCodeOrbs: Set<String> = []
+    private var orbFolders: [String: String] = [:]
+    private var orbActivity: [String: Date] = [:]
+    private var globalMouseMonitor: Any?
+    private var localMouseMonitor: Any?
+    private var hoverTimer: DispatchSourceTimer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -41,15 +71,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         overlay = OverlayController(settings: settings)
         speech = SpeechController(config: config, settings: settings, overlay: overlay)
+        speech.onFinish = { [weak self] in
+            let finished = self?.activeSpeechSession
+            self?.isSpeaking = false
+            self?.activeSpeechSession = nil
+            if let finished { self?.finishClosingSessionIfReady(finished) }
+            self?.playNextSpeech()
+        }
 
         appState.testVoice = { [weak self] in
             guard let self else { return }
-            self.speech.speak(
-                text: "Hola. Soy Prisma. Esta es la voz que usaré para avisarte cuando terminen tus agentes.",
-                mode: .full
-            )
+            self.speechQueue.append(SpeakRequest(text: "Hola. Soy Prisma. Esta es la voz que usaré para avisarte cuando terminen tus agentes."))
+            self.playNextSpeech()
         }
-        appState.stopSpeaking = { [weak self] in self?.speech.stop() }
+        appState.stopSpeaking = { [weak self] in self?.stopAll() }
         appState.openSettings = { [weak self] in self?.showSettings() }
         appState.quit = { NSApp.terminate(nil) }
 
@@ -58,6 +93,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupStatusItem()
         startServer()
+        startSessionMonitor()
+        startHoverMonitor()
         installTerminationHandler()
         cleanupOldTempFiles()
 
@@ -69,6 +106,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        sessionMonitor?.cancel()
+        hoverTimer?.cancel()
+        if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
+        if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
         speech?.shutdown()
         server?.stop()
         try? FileManager.default.removeItem(at: AppPaths.runtime)
@@ -89,17 +130,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             token: config.token,
             onSpeak: { [weak self] request in
                 guard let self else { return }
-                self.speech.speak(
-                    text: request.text,
-                    mode: self.settings.mode,
-                    cwd: request.cwd,
-                    sessionID: request.session_id,
-                    engineOverride: request.engine,
-                    voiceOverride: request.voice
-                )
+                if let id = request.session_id, !id.isEmpty, self.sessionSources.contains(request.source ?? "") {
+                    _ = self.sessionOrb(id, source: request.source, pid: request.pid, folder: request.cwd)
+                }
+                self.stopWatchingTranscript(of: request.session_id)
+                self.speechQueue.append(request)
+                self.playNextSpeech()
             },
             onStop: { [weak self] in
-                self?.speech.stop()
+                self?.stopAll()
+            },
+            onThinking: { [weak self] event in
+                guard let self, self.settings.showThinking else { return }
+                if let id = event.session_id, !id.isEmpty,
+                   self.sessionSources.contains(event.source ?? "") || self.sessionOverlays[id] != nil {
+                    let target = self.sessionOrb(id, source: event.source, pid: event.pid, folder: event.directory)
+                    target.model.isThinking = true
+                    target.show()
+                    self.watchTranscript(event.transcript_path, of: id)
+                    return
+                }
+                self.thinkingTimeout?.cancel()
+                self.thinkingSession = event.session_id
+                self.overlay.model.isThinking = true
+                self.overlay.show()
+                let timeout = DispatchWorkItem { [weak self] in
+                    self?.thinkingSession = nil
+                    self?.overlay.model.isThinking = false
+                    self?.overlay.hide(after: 0)
+                }
+                self.thinkingTimeout = timeout
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3600, execute: timeout)
+            },
+            onInterrupt: { [weak self] event in
+                guard let self else { return }
+                if let id = event.session_id, let target = self.sessionOverlays[id] {
+                    target.model.isThinking = false
+                    self.stopWatchingTranscript(of: id)
+                    return
+                }
+                guard self.overlay.model.isThinking, self.thinkingSession == event.session_id else { return }
+                self.thinkingTimeout?.cancel()
+                self.thinkingSession = nil
+                self.overlay.model.isThinking = false
+                self.overlay.hide(after: 0)
+            },
+            onSessionStart: { [weak self] event in
+                guard let self, let id = event.session_id else { return }
+                _ = self.sessionOrb(id, source: event.source, pid: event.pid, folder: event.directory)
+            },
+            onSessionEnd: { [weak self] id in
+                guard let self, !self.resumedSessions.contains(id) else { return }
+                self.endSession(id)
             }
         )
 
@@ -119,6 +201,482 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         self.server = server
         server.start()
+    }
+
+    private func startSessionMonitor() {
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "Prisma.CodexSessions"))
+        timer.schedule(deadline: .now(), repeating: 2)
+        timer.setEventHandler { [weak self] in
+            let processes = CodexSessionsMonitor.processList()
+            let sessions = processes.map(CodexSessionsMonitor.resumedSessions(in:))
+            let codexPIDs = processes.map(CodexSessionsMonitor.resumedSessionPIDs(in:)) ?? [:]
+            let claude = processes.map(ClaudeCodeWindows.windows(in:))
+            let openCode = processes.map(OpenCodeWindows.windows(in:))
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if let sessions { self.updateResumedSessions(sessions, pids: codexPIDs) }
+                self.checkSessionProcesses()
+                if let claude { self.updateClaudeWindows(claude) }
+                if let openCode { self.updateOpenCodeWindows(openCode) }
+                self.checkThinkingTranscripts()
+            }
+        }
+        sessionMonitor = timer
+        timer.resume()
+    }
+
+    private func updateResumedSessions(_ sessions: [String], pids: [String: Int32] = [:]) {
+        let current = Set(sessions)
+        let closed = resumedSessions.subtracting(current)
+        resumedSessions = current
+        for (id, pid) in pids { codexProcesses[id] = pid }
+        for id in sessions { _ = ensureSession(id, source: "codex", pid: pids[id].map(Int.init)) }
+        for id in closed {
+            codexProcesses[id] = nil
+            endSession(id)
+        }
+    }
+
+    /// The orb of an agent session, created or taken over as needed.
+    private func sessionOrb(_ id: String, source: String?, pid: Int?, folder: String?) -> OverlayController {
+        source == "opencode" ? openCodeOrb(id, folder: folder) : ensureSession(id, source: source, pid: pid)
+    }
+
+    /// OpenCode sessions take over the orb of the window that shows them; a
+    /// window opened in the same folder is that window.
+    private func openCodeOrb(_ id: String, folder: String?) -> OverlayController {
+        defer {
+            openCodeOrbs.insert(id)
+            orbActivity[id] = Date()
+            if let folder { orbFolders[id] = folder }
+        }
+        if sessionOverlays[id] != nil { return ensureSession(id, source: "opencode") }
+        let candidates = openCodeOrbs.filter { key in
+            guard key != id, canHandOver(key) else { return false }
+            guard let folder else { return true }
+            let place = sessionProcesses[key].flatMap { openCodeWindows[$0] } ?? orbFolders[key]
+            return OpenCodeWindows.window(in: place, shows: folder)
+        }
+        // A window's waiting orb first, otherwise the one idle the longest.
+        let previous = candidates.min { a, b in
+            let aWaiting = a.hasPrefix("opencode:"), bWaiting = b.hasPrefix("opencode:")
+            if aWaiting != bWaiting { return aWaiting }
+            return (orbActivity[a] ?? .distantPast) < (orbActivity[b] ?? .distantPast)
+        }
+        if let previous, let target = handOver(previous, to: id) {
+            target.agentSource = "opencode"
+            closingSessions.remove(id)
+            return target
+        }
+        return ensureSession(id, source: "opencode")
+    }
+
+    /// Every open Claude Code window waits with its own orb, even before its
+    /// first hook; the hooks report the same process and take the orb over.
+    private func updateClaudeWindows(_ windows: [Int32: String?]) {
+        let owners = Set(sessionProcesses.values)
+        for (pid, resumed) in windows.sorted(by: { $0.key < $1.key }) where !owners.contains(pid) {
+            _ = ensureSession(resumed ?? "claude:\(pid)", source: "claude-code", pid: Int(pid))
+        }
+    }
+
+    /// Every open OpenCode window waits with its own orb; sessions whose
+    /// window was not noticed yet join it instead of adding another orb.
+    private func updateOpenCodeWindows(_ windows: [Int32: String]) {
+        openCodeWindows = windows
+        let owners = Set(sessionProcesses.values)
+        for (pid, folder) in windows.sorted(by: { $0.key < $1.key }) where !owners.contains(pid) {
+            if let orphan = openCodeOrbs.sorted().first(where: {
+                sessionProcesses[$0] == nil && OpenCodeWindows.window(in: folder, shows: orbFolders[$0])
+            }) {
+                sessionProcesses[orphan] = pid
+                continue
+            }
+            let key = "opencode:\(pid)"
+            _ = ensureSession(key, source: "opencode", pid: Int(pid))
+            openCodeOrbs.insert(key)
+            orbFolders[key] = folder
+            orbActivity[key] = Date()
+        }
+        // A reply that finished after its window closed leaves once it is idle.
+        for id in openCodeOrbs where sessionProcesses[id] == nil && canHandOver(id)
+            && Date().timeIntervalSince(orbActivity[id] ?? .distantPast) > 20 {
+            endSession(id, immediately: true)
+        }
+    }
+
+    @discardableResult
+    private func ensureSession(_ id: String, source: String? = nil, pid: Int? = nil) -> OverlayController {
+        closingSessions.remove(id)
+        pendingEnds.removeValue(forKey: id)?.cancel()
+        let resolvedSource = source ?? (openCodeOrbs.contains(id) || id.hasPrefix("opencode:")
+            ? "opencode"
+            : (id.hasPrefix("claude:") ? "claude-code" : "codex"))
+        if resolvedSource == "codex", let pid, pid > 1 {
+            codexProcesses[id] = Int32(clamping: pid)
+        }
+        let owner = ownerProcess(pid, source: resolvedSource)
+        if let existing = sessionOverlays[id] {
+            if let source, !source.isEmpty { existing.agentSource = source }
+            if let owner { sessionProcesses[id] = owner }
+            return existing
+        }
+        // The same agent window moved on to another conversation (/clear,
+        // /resume, another OpenCode session): its orb follows it in place.
+        if let owner,
+           let previous = sessionProcesses.first(where: { $0.value == owner && canHandOver($0.key) })?.key,
+           let target = handOver(previous, to: id) {
+            target.agentSource = resolvedSource
+            return target
+        }
+        let target = OverlayController(settings: settings)
+        target.agentSource = resolvedSource
+        target.keepsVisible = true
+        let phaseSeed = id.utf8.reduce(UInt64(5381)) { ($0 &* 33) &+ UInt64($1) }
+        target.model.idlePhase = Double(phaseSeed % 628) / 100
+        target.model.hasIdleState = true
+        target.model.onActiveChange = { [weak self] in
+            self?.arrangeSessions()
+        }
+        target.onSelect = { [weak self, weak target] in
+            guard let self, let target else { return }
+            if let key = self.sessionOverlays.first(where: { $0.value === target })?.key {
+                self.focusSession(key)
+            }
+        }
+        sessionOverlays[id] = target
+        sessionOrder.append(id)
+        if let owner { sessionProcesses[id] = owner }
+        arrangeSessions()
+        target.show()
+        return target
+    }
+
+    /// Claude Code and OpenCode report their window's process; Codex keeps
+    /// its own session lifecycle.
+    private func ownerProcess(_ pid: Int?, source: String?) -> Int32? {
+        guard let pid, pid > 1, source == "claude-code" || source == "opencode" else { return nil }
+        return Int32(clamping: pid)
+    }
+
+    /// An orb can follow its window to a new conversation unless its own
+    /// turn is still thinking or speaking.
+    private func canHandOver(_ id: String) -> Bool {
+        if pendingEnds[id] != nil { return true }
+        guard let target = sessionOverlays[id], !closingSessions.contains(id) else { return false }
+        return !target.model.isThinking && activeSpeechSession != id
+            && !speechQueue.contains(where: { $0.session_id == id })
+    }
+
+    private func handOver(_ previous: String, to id: String) -> OverlayController? {
+        guard let target = sessionOverlays.removeValue(forKey: previous) else { return nil }
+        pendingEnds.removeValue(forKey: previous)?.cancel()
+        closingSessions.remove(previous)
+        sessionOverlays[id] = target
+        if let index = sessionOrder.firstIndex(of: previous) { sessionOrder[index] = id }
+        sessionProcesses[id] = sessionProcesses.removeValue(forKey: previous)
+        thinkingTranscripts[previous] = nil
+        if openCodeOrbs.remove(previous) != nil { openCodeOrbs.insert(id) }
+        orbFolders[id] = orbFolders.removeValue(forKey: previous)
+        orbActivity[id] = orbActivity.removeValue(forKey: previous)
+        if activeSpeechSession == previous { activeSpeechSession = id }
+        for index in speechQueue.indices where speechQueue[index].session_id == previous {
+            speechQueue[index].session_id = id
+        }
+        return target
+    }
+
+    private static func processIsAlive(_ pid: Int32) -> Bool {
+        kill(pid, 0) == 0 || errno == EPERM
+    }
+
+    /// Orbs of Claude Code and OpenCode windows leave when the window closes,
+    /// even if the agent could not send its session-end hook.
+    private func checkSessionProcesses() {
+        for (id, owner) in sessionProcesses where !Self.processIsAlive(owner) {
+            endSession(id, immediately: true)
+        }
+    }
+
+    private func watchTranscript(_ path: String?, of id: String) {
+        guard let path, !path.isEmpty else { return }
+        let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.uint64Value ?? 0
+        thinkingTranscripts[id] = (path, size)
+    }
+
+    private func stopWatchingTranscript(of id: String?) {
+        guard let id else { return }
+        thinkingTranscripts[id] = nil
+    }
+
+    /// Claude Code has no hook for Escape, but it writes the interruption to
+    /// its transcript; the orb then returns to waiting.
+    private func checkThinkingTranscripts() {
+        for (id, watched) in thinkingTranscripts {
+            guard let target = sessionOverlays[id], target.model.isThinking else {
+                thinkingTranscripts[id] = nil
+                continue
+            }
+            guard let handle = FileHandle(forReadingAtPath: watched.path) else { continue }
+            defer { try? handle.close() }
+            guard let end = try? handle.seekToEnd(), end > watched.offset else { continue }
+            let start = max(watched.offset, end > 65_536 ? end - 65_536 : 0)
+            try? handle.seek(toOffset: start)
+            let added = String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
+            thinkingTranscripts[id] = (watched.path, end)
+            // The marker is the text of a user entry; quoted inside a reply or
+            // a tool call it would appear escaped and does not count.
+            if added.contains(#""text":"[Request interrupted by user"#) {
+                target.model.isThinking = false
+                thinkingTranscripts[id] = nil
+            }
+        }
+    }
+
+    /// Places every session orb in the row; visible orbs slide to their new
+    /// place, after `delay` when they close the gap left by a leaving orb.
+    private func arrangeSessions(delay: TimeInterval = 0) {
+        // The row moves as a whole: it follows the active screen only when it
+        // is arranged again, never one orb at a time.
+        let screen = NSScreen.main ?? NSScreen.screens.first
+        let widths = sessionOrder.map { id -> CGFloat in
+            guard let orb = sessionOverlays[id] else { return OverlayController.inactiveSpacing }
+            return orb.model.isActive ? OverlayController.activeSpacing : OverlayController.inactiveSpacing
+        }
+        for (index, id) in sessionOrder.enumerated() {
+            guard let target = sessionOverlays[id] else { continue }
+            target.rowIndex = index
+            target.rowCount = sessionOrder.count
+            target.rowSlotWidths = widths
+            target.rowScreen = screen
+            target.reposition(animated: true, delay: delay)
+        }
+    }
+
+    private func startHoverMonitor() {
+        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .leftMouseDown]
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.updateHoveredOrb()
+                if event.type == .leftMouseDown {
+                    self.handleScreenClick()
+                }
+            }
+        }
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
+            self?.updateHoveredOrb()
+            return event
+        }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 0.1, repeating: 0.08)
+        timer.setEventHandler { [weak self] in
+            self?.updateHoveredOrb()
+        }
+        hoverTimer = timer
+        timer.resume()
+    }
+
+    /// Expands the single orb under the pointer without blocking mouse clicks
+    /// on the menu bar or windows behind the overlay panels.
+    private func updateHoveredOrb() {
+        guard !sessionOverlays.isEmpty else { return }
+        let mouse = NSEvent.mouseLocation
+        var closestID: String?
+        var closestDistance = CGFloat.greatestFiniteMagnitude
+        for (id, target) in sessionOverlays {
+            guard let distance = target.hoverDistance(to: mouse), distance < closestDistance else { continue }
+            closestDistance = distance
+            closestID = id
+        }
+        for (id, target) in sessionOverlays {
+            let hovered = (id == closestID)
+            if target.model.isHovered != hovered {
+                target.model.isHovered = hovered
+            }
+            target.setInteractive(hovered)
+        }
+    }
+
+    private func handleScreenClick() {
+        let mouse = NSEvent.mouseLocation
+        var closestID: String?
+        var closestDistance = CGFloat.greatestFiniteMagnitude
+        for (id, target) in sessionOverlays {
+            guard let distance = target.hoverDistance(to: mouse), distance < closestDistance else { continue }
+            closestDistance = distance
+            closestID = id
+        }
+        if let closestID {
+            focusSession(closestID)
+        }
+    }
+
+    /// Brings the terminal window and tab of session `id` to the front when its
+    /// orb is clicked.
+    private func focusSession(_ id: String) {
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastClickTime > 0.15 else { return }
+        lastClickTime = now
+
+        guard let pid = sessionProcesses[id] ?? codexProcesses[id] else {
+            NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Terminal").first?
+                .activate(options: [.activateAllWindows])
+            return
+        }
+        let tty = Self.ttyPath(of: pid)
+        let app = Self.terminalApp(for: pid)
+        app?.activate(options: [.activateAllWindows])
+
+        guard let tty else { return }
+        let bundle = app?.bundleIdentifier ?? "com.apple.Terminal"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let script: String
+            if bundle == "com.googlecode.iterm2" {
+                script = """
+                on run argv
+                    set targetTTY to item 1 of argv
+                    tell application "iTerm2"
+                        repeat with w in windows
+                            repeat with t in tabs of w
+                                repeat with s in sessions of t
+                                    if tty of s is targetTTY then
+                                        select t
+                                        select s
+                                        set index of w to 1
+                                        activate
+                                        return
+                                    end if
+                                end repeat
+                            end repeat
+                        end repeat
+                        activate
+                    end tell
+                end run
+                """
+            } else if bundle == "com.apple.Terminal" {
+                script = """
+                on run argv
+                    set targetTTY to item 1 of argv
+                    tell application "Terminal"
+                        repeat with w in windows
+                            repeat with t in tabs of w
+                                if tty of t is targetTTY then
+                                    set selected tab of w to t
+                                    if miniaturized of w is true then set miniaturized of w to false
+                                    set index of w to 1
+                                    activate
+                                    return
+                                end if
+                            end repeat
+                        end repeat
+                        activate
+                    end tell
+                end run
+                """
+            } else {
+                return
+            }
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            task.arguments = ["-e", script, tty]
+            task.standardOutput = FileHandle.nullDevice
+            task.standardError = FileHandle.nullDevice
+            try? task.run()
+        }
+    }
+
+    private static func ttyPath(of pid: Int32) -> String? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size,
+              info.e_tdev != 0, info.e_tdev != UInt32.max,
+              let name = devname(Int32(bitPattern: info.e_tdev), mode_t(S_IFCHR)) else { return nil }
+        return "/dev/" + String(cString: name)
+    }
+
+    private static func terminalApp(for pid: Int32) -> NSRunningApplication? {
+        var current = pid
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        for _ in 0..<12 where current > 1 {
+            if let app = NSRunningApplication(processIdentifier: current),
+               app.activationPolicy == .regular {
+                return app
+            }
+            var info = proc_bsdinfo()
+            guard proc_pidinfo(current, PROC_PIDTBSDINFO, 0, &info, size) == size else { break }
+            let parent = Int32(bitPattern: info.pbi_ppid)
+            if parent == current { break }
+            current = parent
+        }
+        return NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Terminal").first
+    }
+
+    private func endSession(_ id: String, immediately: Bool = false) {
+        guard sessionOverlays[id] != nil else { return }
+        if !immediately, let owner = sessionProcesses[id], Self.processIsAlive(owner) {
+            // The window may go on in a new conversation and claim this orb.
+            guard pendingEnds[id] == nil else { return }
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.pendingEnds[id] = nil
+                self.closeSession(id)
+            }
+            pendingEnds[id] = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+            return
+        }
+        pendingEnds.removeValue(forKey: id)?.cancel()
+        closeSession(id)
+    }
+
+    private func closeSession(_ id: String) {
+        guard sessionOverlays[id] != nil else { return }
+        closingSessions.insert(id)
+        finishClosingSessionIfReady(id)
+    }
+
+    private func finishClosingSessionIfReady(_ id: String) {
+        guard closingSessions.contains(id), activeSpeechSession != id,
+              !speechQueue.contains(where: { $0.session_id == id }) else { return }
+        closingSessions.remove(id)
+        guard let target = sessionOverlays.removeValue(forKey: id) else { return }
+        sessionOrder.removeAll { $0 == id }
+        sessionProcesses[id] = nil
+        thinkingTranscripts[id] = nil
+        openCodeOrbs.remove(id)
+        orbFolders[id] = nil
+        orbActivity[id] = nil
+        target.keepsVisible = false
+        target.hide(after: 0, force: true)
+        // Keep the controller alive until its liquid exit animation completes.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { _ = target }
+        // The neighbours start closing the gap once the bubble has begun to shrink.
+        arrangeSessions(delay: 0.18)
+        playNextSpeech()
+    }
+
+    private func playNextSpeech() {
+        guard !isSpeaking, !speechQueue.isEmpty else { return }
+        let request = speechQueue.removeFirst()
+        let target = request.session_id.flatMap { sessionOverlays[$0] } ?? overlay!
+        if target === overlay {
+            thinkingTimeout?.cancel()
+            thinkingSession = nil
+        }
+        speech.selectOverlay(target)
+        activeSpeechSession = request.session_id
+        isSpeaking = true
+        let started = speech.speak(text: request.text, mode: settings.mode, cwd: request.cwd,
+                                   sessionID: request.session_id, engineOverride: request.engine,
+                                   voiceOverride: request.voice)
+        target.model.isThinking = false
+        if !started {
+            isSpeaking = false
+            activeSpeechSession = nil
+            if let id = request.session_id { finishClosingSessionIfReady(id) }
+            playNextSpeech()
+        }
     }
 
     /// `pkill` / SIGTERM does not trigger `applicationWillTerminate`, so we
@@ -166,8 +724,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState.testVoice()
     }
 
-    @objc private func stopAction() {
+    private func stopAll() {
+        speechQueue.removeAll()
+        isSpeaking = false
+        activeSpeechSession = nil
+        thinkingTimeout?.cancel()
+        thinkingSession = nil
+        overlay.model.isThinking = false
+        for target in sessionOverlays.values { target.model.isThinking = false }
+        thinkingTranscripts.removeAll()
         speech.stop()
+        for id in Array(closingSessions) { finishClosingSessionIfReady(id) }
+    }
+
+    @objc private func stopAction() {
+        stopAll()
     }
 
     @objc private func settingsAction() {

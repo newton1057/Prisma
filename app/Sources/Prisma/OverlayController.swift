@@ -3,6 +3,7 @@ import SwiftUI
 import Combine
 
 final class OverlayPanel: NSPanel {
+    var onClick: (() -> Void)?
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
@@ -10,6 +11,10 @@ final class OverlayPanel: NSPanel {
     // (including over the menu bar / notch area) without AppKit clamping it.
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
         return frameRect
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onClick?()
     }
 
     init(contentRect: NSRect) {
@@ -31,6 +36,19 @@ final class OverlayPanel: NSPanel {
     }
 }
 
+/// Forwards display-link ticks without retaining the overlay controller.
+private final class DisplayLinkTarget: NSObject {
+    private let tick: () -> Void
+
+    init(_ tick: @escaping () -> Void) {
+        self.tick = tick
+    }
+
+    @objc func step(_ link: CADisplayLink) {
+        tick()
+    }
+}
+
 final class OverlayController {
     let model = OverlayModel()
 
@@ -39,13 +57,36 @@ final class OverlayController {
     private var hideWorkItem: DispatchWorkItem?
     private var orderOutWorkItem: DispatchWorkItem?
     private var positionCancellable: AnyCancellable?
+    private var themeCancellable: AnyCancellable?
     private var transitionID: Int = 0
-    // Generous canvas around the 276x198 orb so shadows and glow never clip on any edge
+    private var glideLink: CADisplayLink?
+    var keepsVisible = false
+    var onSelect: (() -> Void)?
+    var agentSource: String? {
+        didSet {
+            if oldValue != agentSource { updateTheme() }
+        }
+    }
+    var rowIndex = 0
+    var rowCount = 1
+    var rowSlotWidths: [CGFloat] = [OverlayController.activeSpacing]
+    /// Screen shared by the whole row of session orbs, so one orb never
+    /// jumps alone to the screen that happens to be active.
+    var rowScreen: NSScreen?
+    // Generous canvas around the 198pt circular orb so shadows and glow never clip
     private let panelSize = NSSize(width: 460, height: 360)
+    /// Slot widths for waiting (compact) and active (thinking, speaking or hovered) orbs.
+    static let inactiveSpacing: CGFloat = 78
+    static let activeSpacing: CGFloat = 110
+
+    deinit {
+        glideLink?.invalidate()
+    }
 
     init(settings: SettingsStore) {
         self.settings = settings
         self.model.position = settings.position
+        self.model.haloTheme = settings.theme(for: agentSource)
         self.positionCancellable = settings.$position
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newPosition in
@@ -53,6 +94,20 @@ final class OverlayController {
                 self.model.position = newPosition
                 self.reposition()
             }
+        self.themeCancellable = Publishers.CombineLatest4(
+            settings.$haloTheme,
+            settings.$codexTheme,
+            settings.$claudeTheme,
+            settings.$openCodeTheme
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] _ in
+            self?.updateTheme()
+        }
+    }
+
+    private func updateTheme() {
+        model.haloTheme = settings.theme(for: agentSource)
     }
 
     func show() {
@@ -68,7 +123,8 @@ final class OverlayController {
 
         guard let panel else { return }
         model.position = settings.position
-        position(panel)
+        // A visible orb keeps sliding if it is on its way to a new place.
+        position(panel, animated: true)
 
         let now = Date().timeIntervalSinceReferenceDate
         let current = model.visible ? model.currentPresentation(at: now) : 0.0
@@ -76,7 +132,7 @@ final class OverlayController {
         model.transitionFrom = current
         model.transitionTo = 1.0
         model.transitionStartTime = now
-        model.transitionDuration = 0.48
+        model.transitionDuration = max(0.18, 0.82 * (1.0 - current))
         model.visible = true
 
         panel.alphaValue = 1
@@ -85,7 +141,8 @@ final class OverlayController {
         }
     }
 
-    func hide(after delay: TimeInterval = 1.0) {
+    func hide(after delay: TimeInterval = 1.0, force: Bool = false) {
+        guard force || !keepsVisible else { return }
         hideWorkItem?.cancel()
         orderOutWorkItem?.cancel()
 
@@ -96,7 +153,7 @@ final class OverlayController {
 
             let now = Date().timeIntervalSinceReferenceDate
             let current = self.model.visible ? self.model.currentPresentation(at: now) : 1.0
-            let retractDuration: TimeInterval = 0.44
+            let retractDuration: TimeInterval = max(0.18, 0.70 * current)
 
             self.model.transitionFrom = current
             self.model.transitionTo = 0.0
@@ -107,6 +164,7 @@ final class OverlayController {
                 guard let self, self.transitionID == currentID else { return }
                 self.model.visible = false
                 self.model.audioLevel = 0
+                self.stopGlide()
                 panel.orderOut(nil)
             }
             self.orderOutWorkItem = finishWork
@@ -135,21 +193,35 @@ final class OverlayController {
         model.caption = "PRISMA"
     }
 
-    func reposition() {
+    /// Moves the orb to its place in the row. When `animated`, a visible orb
+    /// slides there (optionally after `delay`) instead of jumping.
+    func reposition(animated: Bool = false, delay: TimeInterval = 0) {
         guard let panel else { return }
-        position(panel)
+        position(panel, animated: animated, delay: delay)
     }
 
     private func createPanel() {
         let panel = OverlayPanel(contentRect: NSRect(origin: .zero, size: panelSize))
+        panel.onClick = { [weak self] in
+            self?.onSelect?()
+        }
         let hosting = NSHostingView(rootView: OverlayView(model: model))
         hosting.frame = NSRect(origin: .zero, size: panelSize)
         panel.contentView = hosting
         self.panel = panel
     }
 
-    private func position(_ panel: NSPanel) {
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+    /// Enables mouse hit-testing only while the pointer is inside this orb's
+    /// glass circle, so clicking the orb focuses its terminal without blocking
+    /// clicks on the rest of the screen.
+    func setInteractive(_ interactive: Bool) {
+        guard let panel, panel.ignoresMouseEvents == interactive else { return }
+        panel.ignoresMouseEvents = !interactive
+    }
+
+    private func position(_ panel: NSPanel, animated: Bool = false, delay: TimeInterval = 0) {
+        let connected = rowScreen.flatMap { row in NSScreen.screens.first { $0 == row } }
+        guard let screen = connected ?? NSScreen.main ?? NSScreen.screens.first else { return }
         let frame = screen.frame
         let size = panelSize
         let origin: NSPoint
@@ -168,6 +240,101 @@ final class OverlayController {
             origin = NSPoint(x: frame.maxX - size.width, y: frame.minY)
         }
 
-        panel.setFrameOrigin(origin)
+        // The panels have transparent margins; position the visible circles,
+        // not the edges of those larger panels, next to one another. Active
+        // orbs claim a wider slot so their neighbours slide aside smoothly.
+        let columns = max(1, Int((frame.width - 20) / Self.activeSpacing))
+        let row = rowIndex / columns
+        let first = row * columns
+        let count = min(columns, rowCount - first)
+        let column = rowIndex - first
+        let widths = (first ..< first + count).map { index in
+            index < rowSlotWidths.count ? rowSlotWidths[index] : Self.inactiveSpacing
+        }
+        let totalWidth = widths.reduce(0, +)
+        let centerInRow = widths.prefix(column).reduce(0, +) + (widths.indices.contains(column) ? widths[column] / 2 : 0)
+        let lastHalf = (widths.last ?? Self.inactiveSpacing) / 2
+        let horizontal = settings.position == .corner
+            ? centerInRow - (totalWidth - lastHalf)
+            : centerInRow - totalWidth / 2
+        let vertical = CGFloat(row) * Self.activeSpacing * (settings.position == .bottom || settings.position == .corner ? 1 : -1)
+        let target = NSPoint(x: origin.x + horizontal, y: origin.y + vertical)
+
+        let current = panel.frame.origin
+        let distance = hypot(target.x - current.x, target.y - current.y)
+        let canSlide = animated && panel.isVisible && model.visible && panel.screen?.frame == frame
+        guard canSlide, distance > 0.5 || glideLink != nil else {
+            stopGlide()
+            panel.setFrameOrigin(target)
+            return
+        }
+        // Neighbours flow aside like drops of liquid; longer trips take a
+        // little longer so their speed stays gentle.
+        let duration = min(0.95, 0.52 + 0.14 * log2(1 + Double(distance / Self.activeSpacing)))
+        model.glide(
+            from: SIMD2(Double(current.x), Double(current.y)),
+            to: SIMD2(Double(target.x), Double(target.y)),
+            delay: delay,
+            duration: duration
+        )
+        startGlide(panel)
+    }
+
+    /// Distance from `screenPoint` to this orb's centre when the pointer lies
+    /// inside its glass circle, or `nil` when outside.
+    func hoverDistance(to screenPoint: NSPoint) -> CGFloat? {
+        guard let panel, panel.isVisible, model.visible else { return nil }
+        let now = Date().timeIntervalSinceReferenceDate
+        let current = model.currentScale(at: now)
+        let effectiveScale = CGFloat(model.isHovered ? max(current, OverlayModel.activeScale) : current)
+        let radius = 99.0 * effectiveScale
+        let center: NSPoint
+        switch settings.position {
+        case .top:
+            center = NSPoint(x: panel.frame.minX + 230, y: panel.frame.minY + 305 - radius)
+        case .bottom:
+            center = NSPoint(x: panel.frame.minX + 230, y: panel.frame.minY + 29 + radius)
+        case .corner:
+            center = NSPoint(x: panel.frame.minX + 371 - radius, y: panel.frame.minY + 29 + radius)
+        case .center:
+            center = NSPoint(x: panel.frame.minX + 230, y: panel.frame.minY + 279 - radius)
+        }
+        let hitRadius = radius + (model.isHovered ? 8 : 4)
+        let dist = hypot(screenPoint.x - center.x, screenPoint.y - center.y)
+        return dist <= hitRadius ? dist : nil
+    }
+
+    // MARK: Sliding
+
+    private func startGlide(_ panel: NSPanel) {
+        guard glideLink == nil, let view = panel.contentView else { return }
+        let target = DisplayLinkTarget { [weak self] in self?.stepGlide() }
+        let link = view.displayLink(target: target, selector: #selector(DisplayLinkTarget.step(_:)))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        link.add(to: .main, forMode: .common)
+        glideLink = link
+    }
+
+    private func stepGlide() {
+        guard let panel else {
+            stopGlide()
+            return
+        }
+        let now = Date().timeIntervalSinceReferenceDate
+        let origin = model.glidePosition(at: now)
+        let current = panel.frame.origin
+        if abs(current.x - origin.x) > 0.25 || abs(current.y - origin.y) > 0.25 {
+            panel.setFrameOrigin(NSPoint(x: origin.x, y: origin.y))
+        }
+        if !model.isGliding(at: now) {
+            panel.setFrameOrigin(NSPoint(x: origin.x, y: origin.y))
+            stopGlide()
+        }
+    }
+
+    private func stopGlide() {
+        glideLink?.invalidate()
+        glideLink = nil
+        model.endGlide()
     }
 }

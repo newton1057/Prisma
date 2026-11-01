@@ -102,6 +102,35 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(position.rawValue, forKey: Keys.position) }
     }
 
+    @Published var haloTheme: HaloTheme {
+        didSet { defaults.set(haloTheme.rawValue, forKey: Keys.haloTheme) }
+    }
+
+    @Published var codexTheme: HaloTheme {
+        didSet { defaults.set(codexTheme.rawValue, forKey: Keys.codexTheme) }
+    }
+
+    @Published var claudeTheme: HaloTheme {
+        didSet { defaults.set(claudeTheme.rawValue, forKey: Keys.claudeTheme) }
+    }
+
+    @Published var openCodeTheme: HaloTheme {
+        didSet { defaults.set(openCodeTheme.rawValue, forKey: Keys.openCodeTheme) }
+    }
+
+    func theme(for source: String?) -> HaloTheme {
+        switch source {
+        case "codex": return codexTheme
+        case "claude-code": return claudeTheme
+        case "opencode": return openCodeTheme
+        default: return haloTheme
+        }
+    }
+
+    @Published var showThinking: Bool {
+        didSet { defaults.set(showThinking, forKey: Keys.showThinking) }
+    }
+
     @Published var stayVisible: Bool {
         didSet { defaults.set(stayVisible, forKey: Keys.stayVisible) }
     }
@@ -130,6 +159,11 @@ final class SettingsStore: ObservableObject {
         static let mode = "mode"
         static let speed = "speed"
         static let position = "position"
+        static let haloTheme = "haloTheme"
+        static let codexTheme = "codexTheme"
+        static let claudeTheme = "claudeTheme"
+        static let openCodeTheme = "openCodeTheme"
+        static let showThinking = "showThinking"
         static let stayVisible = "stayVisible"
         static let duckAudio = "duckAudio"
         static let duckLevel = "duckLevel"
@@ -143,6 +177,12 @@ final class SettingsStore: ObservableObject {
         mode = ReadMode(rawValue: defaults.string(forKey: Keys.mode) ?? "") ?? .full
         speed = defaults.object(forKey: Keys.speed) as? Double ?? 1.0
         position = OverlayPosition(rawValue: defaults.string(forKey: Keys.position) ?? "") ?? .top
+        let fallbackTheme = HaloTheme(rawValue: defaults.string(forKey: Keys.haloTheme) ?? "") ?? .prisma
+        haloTheme = fallbackTheme
+        codexTheme = HaloTheme(rawValue: defaults.string(forKey: Keys.codexTheme) ?? "") ?? fallbackTheme
+        claudeTheme = HaloTheme(rawValue: defaults.string(forKey: Keys.claudeTheme) ?? "") ?? .solar
+        openCodeTheme = HaloTheme(rawValue: defaults.string(forKey: Keys.openCodeTheme) ?? "") ?? .aurora
+        showThinking = defaults.object(forKey: Keys.showThinking) as? Bool ?? true
         stayVisible = defaults.object(forKey: Keys.stayVisible) as? Bool ?? true
         duckAudio = defaults.object(forKey: Keys.duckAudio) as? Bool ?? true
         duckLevel = defaults.object(forKey: Keys.duckLevel) as? Double ?? 0.35

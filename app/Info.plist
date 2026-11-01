@@ -26,6 +26,8 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Prisma necesita controlar Terminal para llevarte a la ventana o pestaña del agente cuando presionas su bolita.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

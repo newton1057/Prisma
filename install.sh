@@ -47,6 +47,8 @@ chmod +x "$SUPPORT/on_stop.sh"
 mkdir -p "$SUPPORT/scripts"
 cp "$PROJECT_ROOT/plugin/scripts/on_stop.sh" "$SUPPORT/scripts/on_stop.sh"
 chmod +x "$SUPPORT/scripts/on_stop.sh"
+cp "$PROJECT_ROOT/plugin/scripts/on_turn.sh" "$SUPPORT/on_turn.sh"
+chmod +x "$SUPPORT/on_turn.sh"
 
 mkdir -p "$CODEX_HOME"
 CODEX_AGENTS_FILE="$CODEX_HOME/AGENTS.md"
@@ -67,8 +69,10 @@ OLD_HOOK_COMMAND="bash \"$HOME/Library/Application Support/CodexVoz/on_stop.sh\"
 install_hook_event() {
   local event="$1"
   local matcher="$2"
+  local timeout=10
+  if [ "$event" = "Interrupt" ] || [ "$event" = "SessionEnd" ]; then timeout=3; fi
   if [ -f "$HOOKS_FILE" ]; then
-    jq --arg event "$event" --arg matcher "$matcher" --arg cmd "$HOOK_COMMAND" --arg old "$OLD_HOOK_COMMAND" '
+    jq --arg event "$event" --arg matcher "$matcher" --arg cmd "$HOOK_COMMAND" --arg old "$OLD_HOOK_COMMAND" --argjson timeout "$timeout" '
       .hooks = (.hooks // {}) |
       .hooks[$event] = (
         ((.hooks[$event] // [])
@@ -78,18 +82,18 @@ install_hook_event() {
             ))))
           | map(select((.hooks | length) > 0)))
         + [(
-            {hooks: [{type: "command", command: $cmd, timeout: 10, statusMessage: "Prisma"}]}
+            {hooks: [{type: "command", command: $cmd, timeout: $timeout, statusMessage: "Prisma"}]}
             + (if $matcher != "" then {matcher: $matcher} else {} end)
           )]
       )
     ' "$HOOKS_FILE" > "$HOOKS_FILE.tmp"
     mv "$HOOKS_FILE.tmp" "$HOOKS_FILE"
   else
-    jq -n --arg event "$event" --arg matcher "$matcher" --arg cmd "$HOOK_COMMAND" '
+    jq -n --arg event "$event" --arg matcher "$matcher" --arg cmd "$HOOK_COMMAND" --argjson timeout "$timeout" '
       {
         hooks: {
           ($event): [(
-            {hooks: [{type: "command", command: $cmd, timeout: 10, statusMessage: "Prisma"}]}
+            {hooks: [{type: "command", command: $cmd, timeout: $timeout, statusMessage: "Prisma"}]}
             + (if $matcher != "" then {matcher: $matcher} else {} end)
           )]
         }
@@ -98,6 +102,14 @@ install_hook_event() {
   fi
 }
 
+TURN_HOOK_COMMAND="bash \"$SUPPORT/on_turn.sh\" codex"
+SPEAK_HOOK_COMMAND="$HOOK_COMMAND"
+HOOK_COMMAND="$TURN_HOOK_COMMAND"
+install_hook_event "UserPromptSubmit" ""
+install_hook_event "Interrupt" ""
+install_hook_event "SessionStart" ""
+install_hook_event "SessionEnd" ""
+HOOK_COMMAND="$SPEAK_HOOK_COMMAND"
 install_hook_event "Stop" ""
 install_hook_event "PreToolUse" "AskUserQuestion|request_user_input|request_user_input_async|send_user_message_async|send_message_to_user_async|question"
 install_hook_event "PermissionRequest" ""

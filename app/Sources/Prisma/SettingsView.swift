@@ -86,7 +86,14 @@ struct SettingsView: View {
                     }
                 }
 
+                Toggle("Mostrar el orbe mientras el agente piensa", isOn: $settings.showThinking)
                 Toggle("Mantener el orbe un momento al terminar", isOn: $settings.stayVisible)
+            }
+
+            Section("Color del halo por agente") {
+                HaloThemeRow(title: "Codex", selection: $settings.codexTheme)
+                HaloThemeRow(title: "Claude Code", selection: $settings.claudeTheme)
+                HaloThemeRow(title: "OpenCode", selection: $settings.openCodeTheme)
             }
 
             Section("Servidor local") {
@@ -136,5 +143,53 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 580, height: 880)
+    }
+}
+
+private struct HaloThemeRow: View {
+    let title: String
+    @Binding var selection: HaloTheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Picker(title, selection: $selection) {
+                ForEach(HaloTheme.allCases) { theme in
+                    Text(theme.title).tag(theme)
+                }
+            }
+
+            HStack(spacing: 9) {
+                ForEach(HaloTheme.allCases) { theme in
+                    let pal = theme.palette
+                    let selected = selection == theme
+                    Button {
+                        selection = theme
+                    } label: {
+                        Circle()
+                            .fill(
+                                AngularGradient(
+                                    colors: [
+                                        Color(red: pal.lowerBright.x, green: pal.lowerBright.y, blue: pal.lowerBright.z),
+                                        Color(red: pal.lowerMid.x, green: pal.lowerMid.y, blue: pal.lowerMid.z),
+                                        Color(red: pal.upperMid.x, green: pal.upperMid.y, blue: pal.upperMid.z),
+                                        Color(red: pal.upperBright.x, green: pal.upperBright.y, blue: pal.upperBright.z),
+                                        Color(red: pal.lowerBright.x, green: pal.lowerBright.y, blue: pal.lowerBright.z)
+                                    ],
+                                    center: .center
+                                )
+                            )
+                            .frame(width: 20, height: 20)
+                            .overlay(
+                                Circle()
+                                    .stroke(selected ? Color.primary : Color.white.opacity(0.28), lineWidth: selected ? 2.2 : 1.0)
+                            )
+                            .scaleEffect(selected ? 1.14 : 1.0)
+                    }
+                    .buttonStyle(.plain)
+                    .help(theme.title)
+                }
+            }
+        }
+        .padding(.vertical, 2)
     }
 }

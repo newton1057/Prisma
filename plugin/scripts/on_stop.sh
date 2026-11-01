@@ -42,6 +42,12 @@ detect_source_from_transcript() {
   printf '%s' "$SOURCE"
 }
 
+# Claude supplies a direct final message too; identify it from its transcript
+# even when transcript parsing is not needed to obtain the text.
+if [ -z "$(printf '%s' "$INPUT" | jq -r '.source // empty' 2>/dev/null)" ]; then
+  SOURCE="$(detect_source_from_transcript "$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)")"
+fi
+
 # Devuelve el bloque <ForPrisma> del mensaje de asistente inmediatamente anterior
 # a una pregunta o solicitud de permiso (sin llamadas a herramientas de por medio)
 # únicamente si formula una pregunta (contiene ? o ¿). Así evitamos leer mensajes
@@ -236,6 +242,10 @@ if [ -z "$MESSAGE" ] || [ "$MESSAGE" = "null" ]; then
 fi
 
 if [ -z "$MESSAGE" ] || [ "$MESSAGE" = "null" ]; then
+  # A completed turn without speech must not leave the thinking orb visible.
+  if [ "$EVENT" = "Stop" ] && [ -f "$SUPPORT/on_turn.sh" ]; then
+    printf '%s' "$INPUT" | jq '.hook_event_name = "Interrupt"' | bash "$SUPPORT/on_turn.sh" >/dev/null 2>&1 || true
+  fi
   log "Stop recibido sin texto de asistente."
   echo '{}'
   exit 0
@@ -303,6 +313,27 @@ fi
 CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)"
 SESSION="$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)"
 
+# Process of the Claude Code window, so the reply reaches the orb of that
+# window (see on_turn.sh). OpenCode replies are matched by their folder.
+agent_pid() {
+  local pid="$PPID" name
+  for _ in 1 2 3 4 5; do
+    name="$(ps -o comm= -p "$pid" 2>/dev/null)"
+    name="${name##*/}"
+    case "${name#-}" in
+      sh|bash|zsh|dash|ksh|fish|tcsh|csh|env) pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')" ;;
+      *) break ;;
+    esac
+    [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null || return 0
+  done
+  printf '%s' "$pid"
+}
+AGENT_PID=""
+if [ "$SOURCE" = "claude-code" ]; then
+  AGENT_PID="$(agent_pid)"
+fi
+case "$AGENT_PID" in *[!0-9]*) AGENT_PID="" ;; esac
+
 # 4. Evitar hablar dos veces el mismo texto seguido dentro de la misma sesión
 #    (por ejemplo si PreToolUse y PermissionRequest o Stop disparan sobre la misma pregunta).
 DEDUPE_FILE="$SUPPORT/tmp/last_spoken.json"
@@ -314,6 +345,9 @@ if [ -f "$DEDUPE_FILE" ]; then
   PREV_TS="$(jq -r '.timestamp // 0' "$DEDUPE_FILE" 2>/dev/null || echo 0)"
   if [ "$PREV_SIG" = "$SIGNATURE" ] && [ $((NOW_TS - PREV_TS)) -lt 45 ]; then
     log "Aviso duplicado omitido (${SOURCE}, ${EVENT})."
+    if [ "$EVENT" = "Stop" ] && [ -f "$SUPPORT/on_turn.sh" ]; then
+      printf '%s' "$INPUT" | jq '.hook_event_name = "Interrupt"' | bash "$SUPPORT/on_turn.sh" >/dev/null 2>&1 || true
+    fi
     echo '{}'
     exit 0
   fi
@@ -399,7 +433,9 @@ PAYLOAD="$(jq -n \
   --arg cwd "$CWD" \
   --arg session "$SESSION" \
   --arg source "$SOURCE" \
-  '{text: $text, cwd: $cwd, session_id: $session, source: $source}')"
+  --arg pid "$AGENT_PID" \
+  '{text: $text, cwd: $cwd, session_id: $session, source: $source}
+   + (if $pid != "" then {pid: ($pid | tonumber)} else {} end)')"
 
 if [ -n "$TOKEN" ]; then
   curl -sS --max-time 5 -X POST "http://127.0.0.1:${PORT}/speak" \

@@ -23,7 +23,8 @@ An animated floating orb appears with each notification. Prisma can also lower b
 - **Completion and question notifications.** Hear updates and requests for information or confirmation from Codex, Claude Code, and OpenCode.
 - **Summaries made for listening.** Agents are instructed to add a short voice block to their responses; Prisma extracts and cleans it before speaking.
 - **A choice of voices.** Use Edge Neural TTS, local Piper, or a system voice. The default is Ava Multilingual; if Edge fails, Prisma tries Piper and then the system voice.
-- **Configurable orb.** Choose its position and whether it remains visible briefly after speaking.
+- **Configurable orb.** Choose its position, whether it remains visible briefly after speaking, and independent halo color themes (10 palettes) for Codex, Claude Code, and OpenCode.
+- **Interactive session orbs (macOS).** Waiting orbs stay compact and semi-transparent (50% opacity) so you can see behind them, expand individually to 95% opacity when thinking, speaking, or hovered, and focus their exact terminal window and tab when clicked.
 - **Adjustable background audio.** Temporarily lower background audio while Prisma speaks, or disable ducking altogether.
 
 ## Requirements
@@ -114,6 +115,14 @@ The Codex and Claude Code hooks and the OpenCode plugin send notifications to an
 
 ## Settings
 
+On macOS, Prisma can show the voice orb as soon as Codex, Claude Code, or OpenCode receives a message. While thinking, its prism light bends into a softly rotating iridescent ring within the glass; when the reply arrives, the ring opens and unrolls into the voice horizon, which reacts to the voice. Enable or disable it under **Animación → Mostrar el orbe mientras el agente piensa**. The setting is enabled by default; restart the agent after installing to load its integration. An interruption returns the session's orb to its waiting appearance. Claude Code has no hook for interruptions, so Prisma notices the interruption Claude Code writes to the session transcript; it reads only the lines added during that turn.
+
+Codex, Claude Code, and OpenCode sessions have separate persistent orbs, arranged side by side and wrapped into additional rows if needed. Between turns, each orb rests in a compact, semi-transparent state (50% opacity) so the menu bar and windows behind it remain visible. When a specific session is thinking or speaking—or when you move the pointer over its orb—only that orb expands to its active size and 95% opacity while its neighbors slide slightly aside. Clicking any session orb brings its terminal window and tab (`Terminal.app` or `iTerm2`) directly to the front. Replies from multiple sessions are spoken in order.
+
+- **Codex:** Prisma detects open `codex resume <session-id>` terminal clients, including ones already running when Prisma starts, and removes their orbs after those clients close and their queued speech finishes. Other Codex sessions use its session and prompt hooks; depending on the client, an empty session may not emit its start hook until the first prompt, and disconnecting a terminal can leave the underlying session running rather than emit a session-end hook.
+- **Claude Code:** every open Claude Code window has an orb, including windows opened before Prisma started. Its hooks report the window's process, so the orb stays in place when the window moves to another conversation (`/clear`, `/resume`) and leaves when the window closes, even if Claude Code could not send its session-end hook.
+- **OpenCode:** OpenCode runs its agent in a shared background service, so Prisma gives each open OpenCode window (`opencode` or `opencode run`) an orb by watching those processes. A session takes over the orb of the window opened in its folder; with several windows in the same folder, Prisma cannot tell which window shows which session. Sessions from clients Prisma does not see, such as a remote client, get an orb that leaves 20 seconds after their reply.
+
 The current app interface uses Spanish labels. On macOS, open **Prisma → Ajustes…** (Settings) from the menu bar; on Windows, open **Ajustes** from the system tray. Options include:
 
 | Setting | Options |
@@ -122,7 +131,8 @@ The current app interface uses Spanish labels. On macOS, open **Prisma → Ajust
 | **Reading mode** | Full message, short summary, or notice only. These modes apply to the text received by the app. |
 | **Speed** | 0.8× to 1.2×. |
 | **Background audio** | Enable or disable ducking and adjust its strength. |
-| **Animation** | Orb position and how long it stays visible afterward. |
+| **Animation** | Orb position, thinking mode, and how long it stays visible afterward. |
+| **Halo color by agent** | Independent halo palette (10 themes) for Codex, Claude Code, and OpenCode across waiting, thinking, and voice states. |
 
 On macOS, ducking is enabled by default and affects the **output device's global volume**, including calls and notifications. By default, it lowers the volume to 35% of its previous level and restores it afterward. Devices whose volume cannot be controlled by macOS are skipped. See [Background audio](docs/audio-ducking.md) for details and limitations. Windows uses per-session ducking; see the [Windows guide](docs/windows.md).
 
@@ -161,6 +171,8 @@ app/                 Native macOS app: interface, voice, and local server
 windows/             Windows app, installer, and voice test scripts
 plugin/              Agent integrations, hooks, and skill
 docs/                Research, technical decisions, and roadmap
+tests/               Swift, Python, and Node tests for the app, hooks, and plugins
+tools/orb-renderer/  Offline frame-by-frame renderer for the orb animation
 samples/             Voice samples
 setup_voice.sh       Prepares voice dependencies and model
 install.sh           Builds and installs Prisma and its integrations
@@ -169,6 +181,8 @@ test.sh              Sends a test notification to the app
 
 ## Documentation
 
+- [Orb animation and session orbs](docs/orb-and-sessions.md): how the macOS orb is drawn and animated, the row of session orbs, how each agent reaches its orb, and how to verify changes.
+- [Handoff notes](docs/handoff.md): state of the latest work and suggested next steps for contributors and coding agents.
 - [Windows guide](docs/windows.md): installation, configuration, compatibility, and validation.
 - [Background audio](docs/audio-ducking.md): macOS ducking behavior, tests, and limitations.
 - [Roadmap](docs/roadmap.md): planned improvements and product decisions.

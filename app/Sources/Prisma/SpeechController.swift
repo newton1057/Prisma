@@ -153,7 +153,7 @@ enum TextPreparer {
 final class SpeechController {
     private let config: AppConfig
     private let settings: SettingsStore
-    private let overlay: OverlayController
+    private var overlay: OverlayController
     private let ducker = SystemAudioDucker()
 
     private var session: SpeechSession?
@@ -162,10 +162,15 @@ final class SpeechController {
     private var appleMeterTimer: Timer?
     private var lastSignature: String?
     private var lastSignatureTime: Date?
+    var onFinish: (() -> Void)?
 
     init(config: AppConfig, settings: SettingsStore, overlay: OverlayController) {
         self.config = config
         self.settings = settings
+        self.overlay = overlay
+    }
+
+    func selectOverlay(_ overlay: OverlayController) {
         self.overlay = overlay
     }
 
@@ -179,19 +184,19 @@ final class SpeechController {
         return value.isEmpty ? config.piperModel : value
     }
 
-    func speak(
+    @discardableResult func speak(
         text: String,
         mode: ReadMode? = nil,
         cwd: String? = nil,
         sessionID: String? = nil,
         engineOverride: String? = nil,
         voiceOverride: String? = nil
-    ) {
+    ) -> Bool {
         let signature = "\(sessionID ?? "")|\(engineOverride ?? "")|\(voiceOverride ?? "")|\(text)"
         if signature == lastSignature,
            let lastSignatureTime,
            Date().timeIntervalSince(lastSignatureTime) < 2.0 {
-            return
+            return false
         }
         lastSignature = signature
         lastSignatureTime = Date()
@@ -213,7 +218,7 @@ final class SpeechController {
         )
         guard !prepared.isEmpty else {
             ducker.restore()
-            return
+            return false
         }
 
         overlay.setCaption("PRISMA")
@@ -239,6 +244,7 @@ final class SpeechController {
         case .apple:
             speakWithApple(prepared)
         }
+        return true
     }
 
     private func resolveEngineAndVoice(
@@ -388,6 +394,7 @@ final class SpeechController {
         overlay.setAudioLevel(0)
         overlay.setSpeaking(false)
         overlay.hide(after: settings.stayVisible ? 1.2 : 0.2)
+        onFinish?()
     }
 
     private func speakWithApple(_ text: String) {

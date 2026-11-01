@@ -1,10 +1,12 @@
 # Roadmap and product notes
 
-Last updated: 2026-10-31
+Last updated: 2026-11-01
 
 ## Current state
 
 The macOS app provides a floating Liquid Glass orb, Edge Ava Multilingual with Piper and Apple Paulina fallbacks, spoken summaries and interactive question notifications for OpenCode, Codex, and Claude Code, system audio ducking with voice compensation and restoration, and settings for voice, speed, position, visibility, and background audio. See [Background audio](audio-ducking.md) for the macOS implementation.
+
+Every Codex, Claude Code and OpenCode session has its own orb in a row: it waits between turns, thinks while the agent works, and turns into the voice horizon to speak. The three states are one beam of light that bends between shapes at 60 fps, and the row slides when orbs arrive or leave. See [Orb animation and session orbs](orb-and-sessions.md); the state of that work and the next steps are in the [handoff notes](handoff.md).
 
 A separate Windows implementation has been added with tray controls, a pulsing orb, voice backends, agent integrations, and per-session ducking. **It still needs end-to-end validation on Windows**; see the [Windows validation checklist](windows.md#validation).
 
@@ -25,6 +27,8 @@ A separate Windows implementation has been added with tray controls, a pulsing o
 | Focused agent's display | Follows the conversation | `NSScreen.main` has proved ambiguous for nonactivating panels |
 | Explicit animation setting | Full user control | Adds a setting |
 
+Since 2026-11-01 the session orbs share one screen per row (`rowScreen`, chosen from `NSScreen.main` whenever the row is arranged), so the row no longer splits across displays. A screen policy can now be applied in one place, `AppDelegate.arrangeSessions`.
+
 Acceptance: with two displays, the orb always appears on the chosen screen, moves immediately when the setting changes, and defaults to the display with the notch.
 
 ### Per-app ducking on macOS — medium priority
@@ -43,6 +47,7 @@ Extract `SystemAudioDucker.restoreTarget` into a pure function and cover an in-p
 
 ### Product experience — low priority
 
+- Tell session orbs apart (agent accent, project label or click to focus the terminal).
 - Orb meter sensitivity for quiet voices.
 - Reduced-motion accessibility mode.
 - A short history of spoken messages.
@@ -56,6 +61,9 @@ Extract `SystemAudioDucker.restoreTarget` into a pure function and cover an in-p
 - The 10-minute watchdog only protects while the process is alive; `SIGKILL` can leave audio attenuated.
 - The Piper voice model (~60 MB) is not included in the repository; `setup_voice.sh` downloads it.
 - The server tries the next port when 8787 is occupied. Scripts must read `runtime.json` rather than hard-code a port.
+- The session registry in `AppDelegate` (owners, hand-over, deferred ends, OpenCode folders) is verified live only; extract it and add unit tests before extending it.
+- OpenCode windows are found by process scan because its plugin runs in a shared service; changes to OpenCode's command line or architecture can break the detection.
+- Claude Code interruptions are detected through a transcript marker that is not a documented interface.
 
 ## Resume work on macOS
 
@@ -78,3 +86,12 @@ Check `/health` on the port in `runtime.json`, toggle and adjust **Ajustes → A
 | 2026-10-30 | Respect manual volume changes during restoration | Avoid overriding the user |
 | 2026-10-30 | Ten-minute watchdog refreshed per chunk | Protect against abnormal exits without cutting off long messages |
 | 2026-10-30 | Minimum 65% ducking level for Apple voice | `AVSpeechSynthesizer` cannot be gain-compensated |
+| 2026-11-01 | One beam whose bend morphs between horizon, ring and fold | Point-by-point interpolation between shapes knotted and cross-faded |
+| 2026-11-01 | Quintic Hermite pose blends with momentum limit | Interrupted transitions stay smooth and weights stay valid |
+| 2026-11-01 | `minimumInterval` 1/90 s and 1/36 s | Exactly 1/60 s skipped about every other frame |
+| 2026-11-01 | Only the light breathes, not the glass | Resizing `NSVisualEffectView` per frame was the largest per-frame cost |
+| 2026-11-01 | No liquid stretch while orbs slide | Redrawing every moving orb at 60 fps dropped the slide to ~33 fps |
+| 2026-11-01 | Detect OpenCode windows by process and folder | Its plugin runs in a shared service and cannot tell windows apart |
+| 2026-11-01 | Claude Code orbs owned by the window process | Keeps the orb through `/clear` and `/resume` and removes it when the window closes |
+| 2026-11-01 | Compact inactive orbs (0.34 scale, 50% opacity) vs active/hovered orbs (0.50 scale, 95% opacity) | Keeps many session orbs unobtrusive and lets the user see behind them while highlighting active or hovered orbs |
+| 2026-11-01 | Per-agent halo themes (10 palettes) and click-to-focus terminal via TTY | Lets the user tell Codex, Claude Code, and OpenCode orbs apart at a glance and jump straight to any session's terminal tab |

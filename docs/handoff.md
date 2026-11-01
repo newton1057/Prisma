@@ -1,0 +1,118 @@
+# Handoff: orb animation and session orbs
+
+Date: 2026-11-01
+For: the next agent continuing work on Prisma (macOS)
+Technical reference: [Orb animation and session orbs](orb-and-sessions.md)
+
+## 1. State of the repository
+
+- **Committed and pushed to `origin/main` (2026-11-01).** Includes thinking mode, unified 60 fps beam animation, persistent session orbs for Codex, Claude Code and OpenCode, compact inactive vs. active/hovered states with translucent glass, ten per-agent halo colour themes, click-to-focus terminal via TTY, offline renderer and test suites.
+- **Installed and running.** `install.sh` and `app/build.sh` were run on 2026-11-01. The app, support scripts, Claude Code plugin and OpenCode plugin all match the repository.
+- **Tests pass:** Swift (motion, themes, activity scale, window detection, Codex monitor), Python (hooks; Windows app), Node (OpenCode flow). Commands are in [section 8.1](orb-and-sessions.md#81-automated-tests) of the reference.
+
+## 2. What was done
+
+### Codex session `01a19592-8739-7d53-89e1-7398f62ddfd2` (resume with `codex resume 01a19592-8739-7d53-89e1-7398f62ddfd2`)
+
+- Thinking mode: the orb appears when a prompt is sent and turns into the voice orb for the reply. Codex first, then Claude Code and OpenCode.
+- Shell and orbs:
+  - Circular container, made smaller, halos centred.
+  - Droplet-like entrance and exit.
+  - Dark interior while thinking.
+- One persistent orb per Codex session, in a row, with replies spoken in order. Open `codex resume <id>` clients are detected by process.
+- Waiting state, after many iterations (constellation, light flower, droplet, aurora, a blue ribbon from a reference image, then folds inspired by a Dribbble shot). The colours follow the voice palette.
+
+### Claude Code session `4825ad45-2a1c-4ee0-ac81-1abdb7ea98f7`
+
+1. **One beam across states.**
+   - Problem: transitions interpolated points between unrelated shapes, so the ring flipped and knotted when opening, and colours and backgrounds cross-faded.
+   - Fix: a single centre line whose bend goes from the horizon arc to a closed loop. Colours are attached to the beam, the loop ends fade before parting, and the background changes in step with the bend. Pose changes use a quintic Hermite blend that keeps momentum through interruptions.
+2. **True 60 fps.** `minimumInterval: 1/60` was skipping about every other frame (31–38 fps measured). It now uses 1/90 for motion and 1/36 for waiting. The audio level no longer triggers redraws.
+3. **Performance.**
+   - The glass blur is no longer resized every frame.
+   - Unused layers leave the view tree.
+   - Gradients animate opacity instead of colours.
+   - Two canvases were merged.
+   - Result: CPU with 7 orbs went from about 44 % to 25–29 %.
+4. **Sliding row.** Neighbours slide when an orb arrives or leaves (`CADisplayLink`, 60 Hz measured). The row stays on one screen (`rowScreen`).
+5. **Session orbs for Claude Code and OpenCode.**
+   - Each window has an orb.
+   - Claude Code: hooks report the window process; `/clear` and `/resume` keep the orb in place; Escape is noticed in the transcript.
+   - OpenCode: windows are found by process scan and matched by folder, because its plugin runs in a shared service.
+### OpenCode session (2026-11-01)
+
+1. **Compact inactive vs. active session orbs and translucent glass.**
+   - Waiting orbs rest in a compact state (scale `0.34`, ~67 pt diameter, 78 pt slot, 50 % opacity) with a softened backdrop blur and translucent smoked-glass interior so the menu bar and windows behind them remain readable.
+   - When a specific orb is thinking, speaking, or hovered by the pointer (`NSEvent` global/local monitors + hit-testing on the orb circle), only that orb smoothly expands to its active size (scale `0.50`, ~99 pt diameter, 110 pt slot, 95 % opacity) while its neighbours slide 16 pt aside.
+2. **Ten halo colour themes per agent.**
+   - Added `HaloTheme` (`prisma`, `aurora`, `oceano`, `nebula`, `solar`, `amatista`, `esmeralda`, `artico`, `atardecer`, `platino`), recolouring the bloom, spectral bands, core filament, closed-loop stops, waiting ambient glow and outer aura across all three states.
+   - Added independent selectors and interactive colour swatches in **Ajustes → Color del halo por agente** (`codexTheme`, `claudeTheme`, `openCodeTheme`).
+3. **Click an orb to focus its terminal.**
+   - `CodexSessionsMonitor.resumedSessionPIDs` records the process ID for `codex resume` sessions alongside Claude Code and OpenCode window processes.
+   - While hovered, only that orb's panel enables mouse hit-testing (`setInteractive(true)`). Clicking the orb resolves its controlling TTY (`proc_pidinfo` + `devname`) and activates the exact window and tab in `Terminal.app` or `iTerm2`.
+
+## 3. Resume work
+
+```bash
+cd ~/Desktop/Prisma
+./app/build.sh                     # build only (app/Prisma.app)
+./install.sh                       # full install: app, scripts, Codex hooks, Claude Code and OpenCode plugins
+tools/orb-renderer/render.sh /tmp/orb 30 cycle && \
+  python3 tools/orb-renderer/sheet.py /tmp/orb /tmp/orb.png 30 1.0,3.6,6.6   # look at transitions
+```
+
+To reinstall only the app after a Swift change:
+
+```bash
+./app/build.sh
+pkill -f 'Prisma.app/Contents/MacOS/Prisma'
+rm -rf ~/Applications/Prisma.app
+cp -R app/Prisma.app ~/Applications/
+open ~/Applications/Prisma.app
+```
+
+Session orbs reappear within 2 s: Codex `resume` clients and every Claude Code and OpenCode window are detected by process. Changes to `plugin/` need `./install.sh`; Claude Code runs its hooks from the plugin cache.
+
+## 4. Gotchas
+
+- **OpenCode's plugin runs in a daemon** (`opencode serve --service`). `process.pid` there is not a window, and there are no client connect or disconnect events. Window detection lives in Prisma (`OpenCodeWindows.swift`).
+- **Never use `minimumInterval: 1/60`** in `TimelineView`; see [section 3.3](orb-and-sessions.md#33-frame-rate) of the reference.
+- **Never scale `NSVisualEffectView` per frame** or reassign its properties in `updateNSView`; it re-renders its material.
+- **Claude Code** loads plugin hooks from `~/.claude/plugins/cache/prisma-local/prisma/1.0.0`. Running sessions keep the hook commands they started with but run the updated scripts at that path.
+- **Codex hooks must be trusted;** `install.sh` does it through the Codex app server.
+- **`install.sh` stops Prisma** with `pkill`. The `SIGTERM` handler restores ducked audio.
+- **Read the port from `runtime.json`;** it can change.
+- **Tests are audible.** Testing through the API speaks aloud and adds orbs. Use `engine: "apple"`, short texts, a test session id, and `POST /session/end` afterwards.
+- **SourceKit reports false errors** for single files of this multi-file module. Check with `swift build` or `swiftc` instead.
+- **Screen recordings and window polling** cannot measure 60 fps. Count frames in the app with temporary logging.
+
+## 5. Working with this user
+
+- Writes in Spanish and expects replies in Spanish. Every reply, and every question, ends with a `<ForPrisma>…</ForPrisma>` block of one to three spoken sentences without paths, code or Markdown (global instruction in `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`).
+- Iterates visually on the orb and notices any cut, jump or cross-fade ("se ve el corte"). Wants every change of state to look like the same light, and likes the liquid and bubble metaphor.
+- Often asks to see the flow again: demonstrate it live through the local API, then end the test session.
+- Asks for verification ("verifícalo"). Show frame sheets, measurements or recordings, not only claims.
+- Installing during the work was approved. Commits, pushes and anything outward-facing need explicit approval.
+
+## 6. Suggested next improvements
+
+Ordered by priority. Each one should be verified the way this work was: tests, frame sheets for animation, live checks in the app.
+
+1. **Commit the work** in the groups listed in section 1, after the user agrees.
+2. **Display selection (roadmap, high).** Add a setting (menu bar screen, pointer screen, active screen) and feed it into `rowScreen` in `AppDelegate.arrangeSessions`. Animate the row moving to another screen (shrink out, grow in) instead of snapping. *Acceptance:* with two displays the row always appears on the chosen screen, as one row, and moves when the setting changes.
+3. **Unit tests for the session registry.** Extract the bookkeeping in `AppDelegate` (session orbs, owners, `handOver`, deferred ends, OpenCode folders and orphans, speech routing) into a type without AppKit and test it. Today it is verified only live.
+4. **Tell orbs apart.** The user cannot see which orb is which session or agent. Options: a subtle per-agent accent on the rim, a hover label with the project folder (panels ignore the mouse today), or a click that focuses the agent's terminal. Ask the user before choosing.
+5. **Lower idle cost.** The SwiftUI view graph is now the main cost, about 4 % CPU per waiting orb. Options:
+   - Draw the background gradients inside the beam canvas.
+   - Lower the waiting frame rate when many orbs are visible.
+   - Move to a Core Animation or Metal renderer, without changing the look.
+
+   Measure with `sample` and with in-app frame counts.
+6. **Reduced motion.** Respect `NSWorkspace.shared.accessibilityDisplayShouldReduceMotion`: slower spin, no sweep, shorter morphs.
+7. **Codex orbs that follow the terminal.** Check whether Codex hooks run under the terminal's `codex` process. If they do, report its PID like Claude Code so a closed terminal removes its orb.
+8. **OpenCode details.**
+   - Verify the real `session.created` payload; only the mocked test covers it.
+   - If prompts expose a client id, use it to tell apart windows in the same folder.
+9. **Claude Code one-shot runs.** Decide with the user whether `claude -p` runs should show an orb at all; the hook PID's process arguments can tell them apart.
+10. **Long rows.** Add a compact mode or a cap when many sessions are open, and animate wrapping into a second row.
+11. **Windows parity.** The Windows app has none of these features.

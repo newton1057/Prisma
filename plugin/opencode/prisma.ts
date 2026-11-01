@@ -221,6 +221,33 @@ function triggerOnStop(payload: {
   child.unref()
 }
 
+// The native macOS orb uses the same authenticated turn hook as Codex.
+// Windows has its own voice hook and does not yet implement this endpoint.
+// OpenCode runs this plugin in its shared background service, so Prisma
+// gives each open OpenCode window a waiting orb itself; the session folder
+// tells it which window's orb a session belongs to.
+function triggerTurn(
+  event: "SessionStart" | "UserPromptSubmit" | "Interrupt",
+  sessionID: string,
+  directory?: string,
+): Promise<void> {
+  if (process.platform === "win32") return Promise.resolve()
+  const script = join(homedir(), "Library", "Application Support", "Prisma", "on_turn.sh")
+  return new Promise((resolve) => {
+    const child = spawn("bash", [script, "opencode"], { stdio: ["pipe", "ignore", "ignore"] })
+    child.on("error", () => resolve())
+    child.on("close", () => resolve())
+    child.stdin.on("error", () => {})
+    child.stdin.end(JSON.stringify({ hook_event_name: event, session_id: sessionID, directory: directory ?? "" }))
+  })
+}
+
+async function sessionDirectory(ctx: any, sessionID: string): Promise<string> {
+  const raw = await ctx.session?.get?.({ sessionID }).catch(() => undefined)
+  const info = raw?.data ?? raw
+  return info?.directory ?? ctx?.location?.directory ?? ""
+}
+
 async function handleQuestionAsked(
   ctx: any,
   sessionID: string,
@@ -283,6 +310,20 @@ export default {
   id: "prisma",
   async setup(ctx: any) {
     const controller = new AbortController()
+    const thinkingSessions = new Set<string>()
+
+    if (typeof ctx.session?.hook === "function") {
+      await ctx.session.hook("prompt", async (event: any) => {
+        try {
+          const sessionID = event?.sessionID
+          if (!sessionID || await isSubagent(ctx, sessionID)) return
+          thinkingSessions.add(sessionID)
+          await triggerTurn("UserPromptSubmit", sessionID, await sessionDirectory(ctx, sessionID))
+        } catch {
+          // Prisma must never prevent a prompt from being submitted.
+        }
+      })
+    }
 
     // Pide al modelo que cierre cada respuesta y cada pregunta con un bloque pensado para voz.
     if (typeof ctx.session?.hook === "function") {
@@ -321,6 +362,7 @@ export default {
             const token = String(event?.callID ?? event?.id ?? "")
             if (sessionID) {
               await handleQuestionAsked(ctx, sessionID, questions, token)
+              thinkingSessions.delete(sessionID)
             }
           } catch {
             // Ignorar errores para no bloquear la herramienta
@@ -329,11 +371,34 @@ export default {
         .catch(() => undefined)
     }
 
+    // A new main session (not a subagent) takes over its window's waiting orb.
+    // Separate from the speech stream so it can never interrupt it.
+    void (async () => {
+      try {
+        const stream = ctx.event.subscribe({ types: ["session.created"], signal: controller.signal })
+        for await (const event of stream) {
+          try {
+            const props = event?.properties ?? event?.data ?? event
+            const info = props?.info ?? props?.session ?? props
+            const sessionID: string | undefined = info?.id ?? props?.sessionID ?? event?.sessionID
+            if (!sessionID || info?.parentID || await isSubagent(ctx, sessionID)) continue
+            await triggerTurn("SessionStart", sessionID, info?.directory ?? await sessionDirectory(ctx, sessionID))
+          } catch {
+            // Ignore per-event errors so the subscriber stays alive
+          }
+        }
+      } catch {
+        // Stream ended or aborted on cleanup
+      }
+    })()
+
     void (async () => {
       try {
         const stream = ctx.event.subscribe({
           types: [
             "session.execution.succeeded",
+            "session.execution.failed",
+            "session.execution.interrupted",
             "session.idle",
             "question.v2.asked",
             "question.asked",
@@ -354,6 +419,7 @@ export default {
               const qid = String(props?.id ?? event?.id ?? "")
               if (sessionID) {
                 await handleQuestionAsked(ctx, sessionID, questions, qid)
+                thinkingSessions.delete(sessionID)
               }
               continue
             }
@@ -365,6 +431,11 @@ export default {
               event?.info?.id
 
             if (!sessionID) continue
+
+            if (eventType === "session.execution.failed" || eventType === "session.execution.interrupted") {
+              if (thinkingSessions.delete(sessionID)) await triggerTurn("Interrupt", sessionID)
+              continue
+            }
 
             const rawSession = await ctx.session
               .get({ sessionID })
@@ -388,18 +459,31 @@ export default {
               }
             }
 
-            if (!lastAssistant) continue
+            if (!lastAssistant) {
+              if (thinkingSessions.delete(sessionID)) await triggerTurn("Interrupt", sessionID)
+              continue
+            }
 
             const dedupeKey = `${sessionID}:${lastAssistant.id ?? ""}`
-            if (globalState.__prismaSpokenIds?.has(dedupeKey)) continue
+            if (globalState.__prismaSpokenIds?.has(dedupeKey)) {
+              if (thinkingSessions.delete(sessionID)) await triggerTurn("Interrupt", sessionID)
+              continue
+            }
 
             const fullText = extractMessageText(lastAssistant)
-            if (!fullText) continue
+            if (!fullText) {
+              if (thinkingSessions.delete(sessionID)) await triggerTurn("Interrupt", sessionID)
+              continue
+            }
 
             const voiceText = toSpeechText(fullText)
-            if (!voiceText) continue
+            if (!voiceText) {
+              if (thinkingSessions.delete(sessionID)) await triggerTurn("Interrupt", sessionID)
+              continue
+            }
 
             rememberSpoken(dedupeKey)
+            thinkingSessions.delete(sessionID)
 
             triggerOnStop({
               session_id: sessionID,

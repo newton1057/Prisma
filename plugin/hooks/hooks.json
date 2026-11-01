@@ -1,6 +1,51 @@
 {
-  "description": "Prisma: avisa con voz y orbe Siri AI al terminar el turno o al hacer preguntas al usuario.",
+  "description": "Prisma: un orbe por sesión que espera, piensa y habla con voz al terminar el turno o al hacer preguntas al usuario.",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-$HOME/Library/Application Support/Prisma}}/scripts/on_turn.sh\" claude-code",
+            "timeout": 6
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-$HOME/Library/Application Support/Prisma}}/scripts/on_turn.sh\" claude-code",
+            "timeout": 6,
+            "statusMessage": "Prisma"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-$HOME/Library/Application Support/Prisma}}/scripts/on_turn.sh\" claude-code",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-$HOME/Library/Application Support/Prisma}}/scripts/on_turn.sh\" claude-code",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "AskUserQuestion|request_user_input|request_user_input_async|send_user_message_async|send_message_to_user_async|question",

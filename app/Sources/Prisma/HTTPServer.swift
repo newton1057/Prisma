@@ -8,6 +8,19 @@ struct SpeakRequest: Codable {
     var source: String?
     var engine: String?
     var voice: String?
+    /// Process of the agent window that owns the session (Claude Code, OpenCode).
+    var pid: Int?
+}
+
+struct ThinkingRequest: Codable {
+    var session_id: String?
+    var source: String?
+    /// Process of the agent window that owns the session (Claude Code, OpenCode).
+    var pid: Int?
+    /// Claude Code transcript, watched to notice when the user interrupts a turn.
+    var transcript_path: String?
+    /// Folder of an OpenCode session, matched with the window that shows it.
+    var directory: String?
 }
 
 struct HTTPRequest {
@@ -52,6 +65,10 @@ final class HTTPServer {
     private let token: String
     private let onSpeak: (SpeakRequest) -> Void
     private let onStop: () -> Void
+    private let onThinking: (ThinkingRequest) -> Void
+    private let onInterrupt: (ThinkingRequest) -> Void
+    private let onSessionStart: (ThinkingRequest) -> Void
+    private let onSessionEnd: (String) -> Void
 
     private let queue = DispatchQueue(label: "Prisma.HTTPServer")
     private var listener: NWListener?
@@ -65,7 +82,11 @@ final class HTTPServer {
         port: Int,
         token: String,
         onSpeak: @escaping (SpeakRequest) -> Void,
-        onStop: @escaping () -> Void
+        onStop: @escaping () -> Void,
+        onThinking: @escaping (ThinkingRequest) -> Void,
+        onInterrupt: @escaping (ThinkingRequest) -> Void,
+        onSessionStart: @escaping (ThinkingRequest) -> Void,
+        onSessionEnd: @escaping (String) -> Void
     ) {
         let base = UInt16(clamping: port)
         self.candidatePorts = (0..<12).compactMap { offset in
@@ -75,6 +96,10 @@ final class HTTPServer {
         self.token = token
         self.onSpeak = onSpeak
         self.onStop = onStop
+        self.onThinking = onThinking
+        self.onInterrupt = onInterrupt
+        self.onSessionStart = onSessionStart
+        self.onSessionEnd = onSessionEnd
     }
 
     func start() {
@@ -199,6 +224,21 @@ final class HTTPServer {
                 return
             }
             DispatchQueue.main.async { self.onSpeak(speak) }
+            respond(connection, status: 200, json: ["ok": true])
+
+        case ("POST", "/thinking"), ("POST", "/interrupt"), ("POST", "/session/start"), ("POST", "/session/end"):
+            let event = request.body.flatMap { try? JSONDecoder().decode(ThinkingRequest.self, from: $0) } ?? ThinkingRequest()
+            DispatchQueue.main.async {
+                switch path {
+                case "/thinking": self.onThinking(event)
+                case "/interrupt": self.onInterrupt(event)
+                case "/session/start":
+                    if let id = event.session_id, !id.isEmpty { self.onSessionStart(event) }
+                case "/session/end":
+                    if let id = event.session_id, !id.isEmpty { self.onSessionEnd(id) }
+                default: break
+                }
+            }
             respond(connection, status: 200, json: ["ok": true])
 
         case ("POST", "/stop"):
