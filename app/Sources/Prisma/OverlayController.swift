@@ -88,11 +88,14 @@ final class OverlayController {
         self.model.position = settings.position
         self.model.haloTheme = settings.theme(for: agentSource)
         self.positionCancellable = settings.$position
+            .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newPosition in
                 guard let self else { return }
-                self.model.position = newPosition
-                self.reposition()
+                withAnimation(.spring(response: 0.52, dampingFraction: 0.86)) {
+                    self.model.position = newPosition
+                }
+                self.reposition(animated: true)
             }
         self.themeCancellable = Publishers.CombineLatest4(
             settings.$haloTheme,

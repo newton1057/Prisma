@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Carbon
 
 enum VoiceEngine: String, CaseIterable, Identifiable {
     case edge
@@ -81,6 +82,41 @@ enum OverlayPosition: String, CaseIterable, Identifiable {
     }
 }
 
+enum PositionShortcut: String, CaseIterable, Identifiable {
+    case ctrlOptionP
+    case ctrlShiftP
+    case optionCommandP
+    case ctrlOptionO
+    case disabled
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .ctrlOptionP: return "⌃⌥P (Control + Opción + P)"
+        case .ctrlShiftP: return "⌃⇧P (Control + Shift + P)"
+        case .optionCommandP: return "⌥⌘P (Opción + Comando + P)"
+        case .ctrlOptionO: return "⌃⌥O (Control + Opción + O)"
+        case .disabled: return "Desactivado"
+        }
+    }
+
+    var carbonKey: (keyCode: UInt32, modifiers: UInt32)? {
+        switch self {
+        case .ctrlOptionP:
+            return (UInt32(kVK_ANSI_P), UInt32(controlKey | optionKey))
+        case .ctrlShiftP:
+            return (UInt32(kVK_ANSI_P), UInt32(controlKey | shiftKey))
+        case .optionCommandP:
+            return (UInt32(kVK_ANSI_P), UInt32(optionKey | cmdKey))
+        case .ctrlOptionO:
+            return (UInt32(kVK_ANSI_O), UInt32(controlKey | optionKey))
+        case .disabled:
+            return nil
+        }
+    }
+}
+
 final class SettingsStore: ObservableObject {
     @Published var voice: VoiceEngine {
         didSet { defaults.set(voice.rawValue, forKey: Keys.voice) }
@@ -100,6 +136,19 @@ final class SettingsStore: ObservableObject {
 
     @Published var position: OverlayPosition {
         didSet { defaults.set(position.rawValue, forKey: Keys.position) }
+    }
+
+    @Published var positionShortcut: PositionShortcut {
+        didSet { defaults.set(positionShortcut.rawValue, forKey: Keys.positionShortcut) }
+    }
+
+    func cyclePosition() {
+        let all = OverlayPosition.allCases
+        guard let index = all.firstIndex(of: position) else {
+            position = .top
+            return
+        }
+        position = all[(index + 1) % all.count]
     }
 
     @Published var haloTheme: HaloTheme {
@@ -159,6 +208,7 @@ final class SettingsStore: ObservableObject {
         static let mode = "mode"
         static let speed = "speed"
         static let position = "position"
+        static let positionShortcut = "positionShortcut"
         static let haloTheme = "haloTheme"
         static let codexTheme = "codexTheme"
         static let claudeTheme = "claudeTheme"
@@ -177,6 +227,7 @@ final class SettingsStore: ObservableObject {
         mode = ReadMode(rawValue: defaults.string(forKey: Keys.mode) ?? "") ?? .full
         speed = defaults.object(forKey: Keys.speed) as? Double ?? 1.0
         position = OverlayPosition(rawValue: defaults.string(forKey: Keys.position) ?? "") ?? .top
+        positionShortcut = PositionShortcut(rawValue: defaults.string(forKey: Keys.positionShortcut) ?? "") ?? .ctrlOptionP
         let fallbackTheme = HaloTheme(rawValue: defaults.string(forKey: Keys.haloTheme) ?? "") ?? .prisma
         haloTheme = fallbackTheme
         codexTheme = HaloTheme(rawValue: defaults.string(forKey: Keys.codexTheme) ?? "") ?? fallbackTheme

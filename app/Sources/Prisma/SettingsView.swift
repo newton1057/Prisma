@@ -86,6 +86,12 @@ struct SettingsView: View {
                     }
                 }
 
+                Picker("Atajo para cambiar posición", selection: $settings.positionShortcut) {
+                    ForEach(PositionShortcut.allCases) { shortcut in
+                        Text(shortcut.title).tag(shortcut)
+                    }
+                }
+
                 Toggle("Mostrar el orbe mientras el agente piensa", isOn: $settings.showThinking)
                 Toggle("Mantener el orbe un momento al terminar", isOn: $settings.stayVisible)
             }

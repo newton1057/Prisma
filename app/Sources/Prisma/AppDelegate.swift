@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import Combine
 import Darwin
+import Carbon
 
 final class AppState: ObservableObject {
     @Published var serverRunning = false
@@ -54,6 +55,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private var hoverTimer: DispatchSourceTimer?
+    private var hotKeyRef: EventHotKeyRef?
+    private var hotKeyHandler: EventHandlerRef?
+    private var shortcutCancellable: AnyCancellable?
+    private static weak var shared: AppDelegate?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -91,10 +96,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState.piperReady = FileManager.default.fileExists(atPath: settings.piperModelPath)
             && FileManager.default.isExecutableFile(atPath: settings.piperPythonPath)
 
+        Self.shared = self
         setupStatusItem()
         startServer()
         startSessionMonitor()
         startHoverMonitor()
+        installHotKeyHandler()
+        registerPositionHotKey(settings.positionShortcut)
+        shortcutCancellable = settings.$positionShortcut
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] shortcut in
+                self?.registerPositionHotKey(shortcut)
+            }
         installTerminationHandler()
         cleanupOldTempFiles()
 
@@ -108,6 +122,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         sessionMonitor?.cancel()
         hoverTimer?.cancel()
+        if let existing = hotKeyRef { UnregisterEventHotKey(existing) }
+        if let handler = hotKeyHandler { RemoveEventHandler(handler) }
         if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
         if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
         speech?.shutdown()
@@ -709,6 +725,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Probar voz", action: #selector(testVoiceAction), keyEquivalent: "t"))
         menu.addItem(NSMenuItem(title: "Detener", action: #selector(stopAction), keyEquivalent: "."))
+        menu.addItem(NSMenuItem(title: "Cambiar posición de los orbes", action: #selector(cyclePositionAction), keyEquivalent: "p"))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Ajustes…", action: #selector(settingsAction), keyEquivalent: ","))
         menu.addItem(.separator())
@@ -718,6 +735,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.target = self
         }
         statusItem.menu = menu
+    }
+
+    private func installHotKeyHandler() {
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        let callback: EventHandlerUPP = { _, _, _ in
+            DispatchQueue.main.async {
+                AppDelegate.shared?.settings.cyclePosition()
+            }
+            return noErr
+        }
+        InstallEventHandler(
+            GetApplicationEventTarget(),
+            callback,
+            1,
+            &eventType,
+            nil,
+            &hotKeyHandler
+        )
+    }
+
+    private func registerPositionHotKey(_ shortcut: PositionShortcut) {
+        if let existing = hotKeyRef {
+            UnregisterEventHotKey(existing)
+            hotKeyRef = nil
+        }
+        guard let (keyCode, modifiers) = shortcut.carbonKey else { return }
+        let hotKeyID = EventHotKeyID(signature: OSType(0x5052534D), id: 1) // 'PRSM'
+        RegisterEventHotKey(
+            keyCode,
+            modifiers,
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &hotKeyRef
+        )
+    }
+
+    @objc private func cyclePositionAction() {
+        settings.cyclePosition()
     }
 
     @objc private func testVoiceAction() {
