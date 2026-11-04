@@ -38,6 +38,8 @@ To update, close Prisma from its tray icon and run the new installer. It replace
 
 Open the tray menu and choose **Ajustes**. The **Agentes** section lists Codex, Claude Code, and OpenCode with a status dot and the action for each:
 
+These connections cover **local sessions on this PC**. Cloud sessions, WSL, containers, and agents running on another machine do not execute the hooks or plugin installed here.
+
 - **Green — Conectado:** the hooks, instructions, and plugin are present. **Reconectar** refreshes them; **Desconectar** removes only Prisma's changes.
 - **Orange — Falta…:** part of the integration is missing, for example hooks, instructions, the plugin, or Codex's hook trust. **Conectar** completes it.
 - **Gray — No conectado:** nothing from Prisma is installed for that agent. **Conectar** adds it.

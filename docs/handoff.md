@@ -69,6 +69,7 @@ Technical reference: [Orb animation and session orbs](orb-and-sessions.md)
    - Codex: merges seven hook events into `~/.codex/hooks.json`, keeps other hooks, adds the instruction block to `~/.codex/AGENTS.md`, installs the plugin, and trusts the hook hashes through `codex app-server`. Claude Code: registers the marketplace, installs and enables the plugin, and adds the block to `~/.claude/CLAUDE.md`. OpenCode: copies the plugin and skill, then reloads.
    - Detection is lenient: a Prisma marketplace installed from the repository also counts as connected.
 2. **Tests.** `tests/test_agent_connections.swift` covers the hook merge and idempotency, disconnect, instruction blocks, OpenCode files, status detection and missing CLIs. An isolated-HOME end-to-end run installed and removed all three agents with the real CLIs.
+3. **Scope note: local sessions only.** Ajustes and the README, Windows guide and LEEME now state that the integrations cover local sessions on the machine where they are installed; cloud or remote sessions do not run these hooks or this plugin. The desktop apps were not exercised, so Codex Desktop, Claude Code Desktop and OpenCode Desktop remain unvalidated; local desktop sessions read the same configuration, but no Desktop session has been verified with Prisma.
 
 ### Windows 1.0.1 session (2026-11-04)
 

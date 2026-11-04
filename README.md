@@ -69,6 +69,8 @@ cd ~/Desktop/Prisma
 
 Open **Prisma → Ajustes… → Agentes** and press **Conectar** next to Codex, Claude Code, or OpenCode. The app installs the hooks, instructions and plugin in your user folder (`~/.codex`, `~/.claude`, `~/.config/opencode`), so it does not need the repository or the DMG's contents afterward. Only the agent's CLI must be installed; when it is missing, the row says so instead of offering the button. **Desconectar** removes only Prisma's changes and leaves the rest of your agent configuration untouched.
 
+Notifications cover **local sessions**. Sessions that run in the cloud or on another machine do not execute the hooks or plugin installed on your Mac, so Prisma cannot announce them.
+
 The hooks read their events with `jq`; if it is missing, Ajustes shows a warning and you can install it with `brew install jq`. Restart any open agent session to load the new hooks. If you install an agent after Prisma, come back to this section instead of rerunning the installer.
 
 To check the installation, select **Probar voz** (Test voice) from Prisma's menu bar icon, or run:
@@ -91,7 +93,7 @@ cd Prisma
 powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\install.ps1
 ```
 
-The installer prepares the environment and voices in `%LOCALAPPDATA%\Prisma`, creates a Start menu shortcut, configures the agents it finds, and opens Prisma. Open the tray menu → **Ajustes → Agentes** to connect, reconnect, or disconnect Codex, Claude Code, and OpenCode later; it installs everything in your user folder and does not need the repository afterward. Restart open agent sessions to load new hooks. Codex may still ask you to approve its hooks if automatic trust fails. The orb appears on the primary display and the app is controlled from the system tray.
+The installer prepares the environment and voices in `%LOCALAPPDATA%\Prisma`, creates a Start menu shortcut, configures the agents it finds, and opens Prisma. Open the tray menu → **Ajustes → Agentes** to connect, reconnect, or disconnect Codex, Claude Code, and OpenCode later; it installs everything in your user folder and does not need the repository afterward. Restart open agent sessions to load new hooks. Codex may still ask you to approve its hooks if automatic trust fails. The orb appears on the primary display and the app is controlled from the system tray. As on macOS, notifications cover **local sessions** only; cloud sessions and sessions on other machines do not run these hooks.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\test.ps1 -Text "Hello. Prisma is working on Windows."
@@ -145,7 +147,7 @@ The current app interface uses Spanish labels. On macOS, open **Prisma → Ajust
 | **Background audio** | Enable or disable ducking and adjust its strength. |
 | **Animation** | Target display (any connected monitor, active display, or pointer display), global shortcut to switch displays (`⌃⌥M` by default), orb position (top/bottom row, left/right vertical column, center, or corner), global shortcut to cycle positions (`⌃⌥P` by default), thinking mode, and how long it stays visible afterward. |
 | **Halo color by agent** | Independent halo palette (10 themes) for Codex, Claude Code, and OpenCode across waiting, thinking, and voice states. |
-| **Agentes** | Connect or disconnect Codex, Claude Code, and OpenCode. Shows whether each integration is connected, incomplete, or unavailable because its CLI is not installed. |
+| **Agentes** | Connect or disconnect Codex, Claude Code, and OpenCode. Shows whether each integration is connected, incomplete, or unavailable because its CLI is not installed. It covers local sessions only. |
 
 On macOS, ducking is enabled by default and affects the **output device's global volume**, including calls and notifications. By default, it lowers the volume to 35% of its previous level and restores it afterward. Devices whose volume cannot be controlled by macOS are skipped. See [Background audio](docs/audio-ducking.md) for details and limitations. Windows uses per-session ducking; see the [Windows guide](docs/windows.md).
 

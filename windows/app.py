@@ -242,9 +242,11 @@ class App:
         self.dialog = tk.Toplevel(self.root); self.dialog.title('Prisma — Ajustes'); self.dialog.resizable(False, False)
         outer = ttk.Frame(self.dialog, padding=18); outer.grid()
         box = ttk.LabelFrame(outer, text='Agentes', padding=10); box.grid(row=0, columnspan=2, sticky='ew', pady=(0, 14))
-        self.agent_rows = ttk.Frame(box); self.agent_rows.grid(sticky='ew')
+        self.agent_rows = ttk.Frame(box); self.agent_rows.grid(row=0, sticky='ew')
+        self.agent_note = ttk.Label(box, text='Solo sesiones locales en este PC: las sesiones en la nube o en otro equipo no ejecutan estos hooks.', wraplength=440, justify='left', foreground='#666')
+        self.agent_note.grid(row=1, sticky='w', pady=(8, 0))
         self.agent_status = ttk.Label(box, text='', wraplength=440, justify='left')
-        self.agent_status.grid(sticky='w', pady=(8, 0))
+        self.agent_status.grid(row=2, sticky='w', pady=(4, 0))
         frame = ttk.Frame(outer); frame.grid(row=1, columnspan=2, sticky='ew'); fields = {}
         options = [('Motor', 'engine', ['edge', 'piper', 'windows']), ('Voz Edge', 'voice', list(VOICES)), ('Lectura', 'mode', ['full', 'short', 'notice']), ('Posición', 'position', ['top', 'bottom', 'center', 'corner'])]
         for row, (label, key, values) in enumerate(options):

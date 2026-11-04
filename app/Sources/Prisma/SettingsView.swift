@@ -22,6 +22,15 @@ struct SettingsView: View {
                     )
                 }
 
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "desktopcomputer")
+                        .foregroundStyle(.secondary)
+                    Text("Solo sesiones locales en este Mac: las sesiones en la nube o en otro equipo no ejecutan estos hooks.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 if !agents.jqAvailable {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle.fill")

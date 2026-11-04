@@ -106,3 +106,4 @@ Check `/health` on the port in `runtime.json`, toggle and adjust **Ajustes → A
 | 2026-11-04 | Windows keeps direct hooks and a direct OpenCode plugin instead of plugin marketplaces | The Windows app is a separate Python implementation; marketplaces would add a second install path with no benefit there |
 | 2026-11-04 | Windows stages `plugin/` and its runtime under `%LOCALAPPDATA%\Prisma\plugin-dist` | Ajustes and the hooks must work after the ZIP folder is moved or deleted |
 | 2026-11-04 | Windows release is a ZIP and a separate `windows-v1.0.1` tag marked not-latest | A Windows EXE cannot be built from macOS, and the macOS DMG remains the Latest release |
+| 2026-11-04 | Document agent connections as local-session only | Cloud and remote sessions do not execute local hooks; the desktop apps were not validated |
