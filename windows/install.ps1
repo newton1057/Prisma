@@ -44,4 +44,4 @@ $shortcut.WorkingDirectory = $Support
 $shortcut.Description = 'Prisma - avisos de voz para tus agentes'
 $shortcut.Save()
 Start-Process $PythonW -ArgumentList ('"' + (Join-Path $Support 'app.py') + '"') -WorkingDirectory $Support
-Write-Host 'Prisma está instalado. Abre el icono de la bandeja y selecciona Probar voz. Reinicia tus agentes.'
+Write-Host 'Prisma está instalado. Abre Ajustes desde la bandeja para probar la voz y conectar tus agentes.'

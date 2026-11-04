@@ -81,7 +81,9 @@ Then start or restart an agent and ask it to complete a short task. To check que
 
 ### Windows
 
-In PowerShell, clone the repository and run the installer:
+Download `Prisma-Windows-1.0.1.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm; choose **More info → Run anyway**. The installer needs no administrator rights.
+
+Alternatively, clone the repository and run the installer in PowerShell:
 
 ```powershell
 git clone https://github.com/newton1057/Prisma.git
@@ -89,13 +91,13 @@ cd Prisma
 powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\install.ps1
 ```
 
-The installer prepares the environment and voices in `%LOCALAPPDATA%\Prisma`, creates a Start menu shortcut, configures hooks, and opens Prisma. Restart your agents; Codex may require you to approve its hooks. The orb appears on the primary display and the app is controlled from the system tray.
+The installer prepares the environment and voices in `%LOCALAPPDATA%\Prisma`, creates a Start menu shortcut, configures the agents it finds, and opens Prisma. Open the tray menu → **Ajustes → Agentes** to connect, reconnect, or disconnect Codex, Claude Code, and OpenCode later; it installs everything in your user folder and does not need the repository afterward. Restart open agent sessions to load new hooks. Codex may still ask you to approve its hooks if automatic trust fails. The orb appears on the primary display and the app is controlled from the system tray.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\test.ps1 -Text "Hello. Prisma is working on Windows."
 ```
 
-See the [Windows guide](docs/windows.md) for requirements, settings, troubleshooting, and outstanding validation. **The Windows implementation still needs to be tested on a Windows machine.**
+See the [Windows guide](docs/windows.md) for requirements, agent connections, settings, troubleshooting, and outstanding validation. **The Windows implementation still needs to be tested on a Windows machine.**
 
 ## How it works
 

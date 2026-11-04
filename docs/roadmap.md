@@ -8,7 +8,7 @@ The macOS app provides a floating Liquid Glass orb, Edge Ava Multilingual with P
 
 Every Codex, Claude Code and OpenCode session has its own orb in a row: it waits between turns, thinks while the agent works, and turns into the voice horizon to speak. The three states are one beam of light that bends between shapes at 60 fps, and the row slides when orbs arrive or leave. Since 1.0.1 the app also connects each agent from **Ajustes → Agentes**, installing its hooks and plugin without the repository, so a DMG install can configure Codex, Claude Code and OpenCode on a clean Mac. See [Orb animation and session orbs](orb-and-sessions.md); the state of that work and the next steps are in the [handoff notes](handoff.md).
 
-A separate Windows implementation has been added with tray controls, a pulsing orb, voice backends, agent integrations, and per-session ducking. **It still needs end-to-end validation on Windows**; see the [Windows validation checklist](windows.md#validation).
+A separate Windows implementation has been added with tray controls, a pulsing orb, voice backends, agent integrations, and per-session ducking. Windows 1.0.1 adds **Ajustes → Agentes** with the same connect/reconnect/disconnect flow as macOS, backed by the portable `windows/agents.py`, and ships as a ZIP that needs no repository after installation. **It still needs end-to-end validation on Windows**; see the [Windows validation checklist](windows.md#validation).
 
 ## Suggested next steps
 
@@ -64,8 +64,9 @@ Extract `SystemAudioDucker.restoreTarget` into a pure function and cover an in-p
 - The session registry in `AppDelegate` (owners, hand-over, deferred ends, OpenCode folders) is verified live only; extract it and add unit tests before extending it.
 - OpenCode windows are found by process scan because its plugin runs in a shared service; changes to OpenCode's command line or architecture can break the detection.
 - Claude Code interruptions are detected through a transcript marker that is not a documented interface.
-- The Codex hook-trust step uses the experimental `codex app-server` protocol (`hooks/list`, `config/batchWrite`); a Codex update can change it. The app falls back to a warning asking the user to approve the hooks.
-- Agent connections merge JSON and TOML by targeted edits rather than rewriting whole files; keep the unrelated-hook tests when touching `AgentConnections.swift`.
+- The Codex hook-trust step uses the experimental `codex app-server` protocol (`hooks/list`, `config/batchWrite`); a Codex update can change it. Both apps fall back to a warning asking the user to approve the hooks.
+- Agent connections merge JSON and TOML by targeted edits rather than rewriting whole files; keep the unrelated-hook tests when touching `AgentConnections.swift` or `windows/agents.py`.
+- Windows agent status relies on `PATH`; an agent installed outside the user or system `PATH` is reported as missing until its CLI is available to the tray app.
 
 ## Resume work on macOS
 
@@ -102,3 +103,6 @@ Check `/health` on the port in `runtime.json`, toggle and adjust **Ajustes → A
 | 2026-11-04 | Ship `plugin/`, `.agents/` and `.claude-plugin/` inside the app under `Contents/Resources/plugin-dist` | The app has a stable source for both marketplaces and can re-stage it after every update |
 | 2026-11-04 | Mark Codex hooks trusted with two batched `app-server` sessions | Codex restarts the server after `hooks/list`, so a later write on the same session fails |
 | 2026-11-04 | Accept any Prisma marketplace root for Claude Code | Installs made earlier from the repository must keep counting as connected |
+| 2026-11-04 | Windows keeps direct hooks and a direct OpenCode plugin instead of plugin marketplaces | The Windows app is a separate Python implementation; marketplaces would add a second install path with no benefit there |
+| 2026-11-04 | Windows stages `plugin/` and its runtime under `%LOCALAPPDATA%\Prisma\plugin-dist` | Ajustes and the hooks must work after the ZIP folder is moved or deleted |
+| 2026-11-04 | Windows release is a ZIP and a separate `windows-v1.0.1` tag marked not-latest | A Windows EXE cannot be built from macOS, and the macOS DMG remains the Latest release |

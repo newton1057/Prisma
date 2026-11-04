@@ -221,7 +221,7 @@ swiftc app/Sources/Prisma/CodexSessionsMonitor.swift tests/test_codex_sessions_m
 swiftc -parse-as-library app/Sources/Prisma/AgentConnections.swift app/Sources/Prisma/Config.swift \
   tests/test_agent_connections.swift -o /tmp/prisma-agents && /tmp/prisma-agents
 
-# Hook scripts (macOS) and the Windows app
+# Hook scripts (macOS), the Windows app and its agent connections
 python3 -m unittest discover -s tests
 
 # OpenCode plugin flow with a mocked OpenCode

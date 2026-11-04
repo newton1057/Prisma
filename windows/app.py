@@ -15,7 +15,8 @@ import tkinter as tk
 from tkinter import ttk
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from common import SUPPORT, RUNTIME, runtime, speech_text
+import agents
+from common import SUPPORT, RUNTIME, VERSION, runtime, speech_text
 
 SUPPORT.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(filename=SUPPORT / 'prisma.log', level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -48,7 +49,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
     def do_GET(self):
-        if self.path.split('?')[0] == '/health': self.reply(200, {'ok': True, 'app': 'Prisma', 'version': '1.0'})
+        if self.path.split('?')[0] == '/health': self.reply(200, {'ok': True, 'app': 'Prisma', 'version': VERSION})
         else: self.reply(404, {'ok': False})
     def do_POST(self):
         auth = self.headers.get('X-Prisma-Token', self.headers.get('X-CodexVoz-Token', ''))
@@ -180,6 +181,7 @@ class App:
     def __init__(self):
         self.root = tk.Tk(); self.root.withdraw()
         self.events = queue.Queue(); self.settings = load_settings(); self.speech = Speech(self.events)
+        self.agent_busy = None; self.agent_overrides = {}; self.agent_warnings = []
         self.overlay = tk.Toplevel(self.root); self.overlay.withdraw(); self.overlay.overrideredirect(True); self.overlay.attributes('-topmost', True)
         self.overlay.configure(bg='#010101'); self.overlay.attributes('-transparentcolor', '#010101')
         self.canvas = tk.Canvas(self.overlay, width=180, height=180, bg='#010101', highlightthickness=0); self.canvas.pack()
@@ -211,6 +213,7 @@ class App:
                 elif action == 'show' and data == self.speech.serial: self.show_overlay()
                 elif action == 'hide' and data == self.speech.serial: self.root.after(1200 if self.settings['stayVisible'] else 200, lambda s=data: self.overlay.withdraw() if s == self.speech.serial else None)
                 elif action == 'settings': self.show_settings()
+                elif action == 'agent-done': self.agent_finished(*data)
                 elif action == 'quit': self.close(); return
         except queue.Empty: pass
         self.root.after(50, self.poll)
@@ -237,7 +240,12 @@ class App:
     def show_settings(self):
         if hasattr(self, 'dialog') and self.dialog.winfo_exists(): self.dialog.lift(); return
         self.dialog = tk.Toplevel(self.root); self.dialog.title('Prisma — Ajustes'); self.dialog.resizable(False, False)
-        frame = ttk.Frame(self.dialog, padding=18); frame.grid(); fields = {}
+        outer = ttk.Frame(self.dialog, padding=18); outer.grid()
+        box = ttk.LabelFrame(outer, text='Agentes', padding=10); box.grid(row=0, columnspan=2, sticky='ew', pady=(0, 14))
+        self.agent_rows = ttk.Frame(box); self.agent_rows.grid(sticky='ew')
+        self.agent_status = ttk.Label(box, text='', wraplength=440, justify='left')
+        self.agent_status.grid(sticky='w', pady=(8, 0))
+        frame = ttk.Frame(outer); frame.grid(row=1, columnspan=2, sticky='ew'); fields = {}
         options = [('Motor', 'engine', ['edge', 'piper', 'windows']), ('Voz Edge', 'voice', list(VOICES)), ('Lectura', 'mode', ['full', 'short', 'notice']), ('Posición', 'position', ['top', 'bottom', 'center', 'corner'])]
         for row, (label, key, values) in enumerate(options):
             ttk.Label(frame, text=label).grid(row=row, column=0, sticky='w', pady=4)
@@ -250,6 +258,60 @@ class App:
         def save():
             self.settings.update({key: value.get() for key, value in fields.items()}); SETTINGS_PATH.write_text(json.dumps(self.settings, indent=2), encoding='utf-8'); self.dialog.destroy()
         ttk.Button(frame, text='Guardar', command=save).grid(row=8, columnspan=2, pady=(12,0))
+        ttk.Label(outer, text=f'Prisma {VERSION}', foreground='#777').grid(row=2, columnspan=2, pady=(10, 0))
+        self.refresh_agents()
+    def refresh_agents(self):
+        if not (hasattr(self, 'agent_rows') and self.agent_rows.winfo_exists()): return
+        for child in self.agent_rows.winfo_children(): child.destroy()
+        try: infos = agents.statuses()
+        except Exception:
+            logging.exception('No se pudieron comprobar los agentes')
+            infos = [agents.AgentInfo(key, agents.TITLES[key], 'failed', 'No se pudo comprobar') for key in ('codex', 'claude', 'opencode')]
+        colors = {'connected': '#1f9d55', 'incomplete': '#c47b00', 'disconnected': '#8a8a8a', 'missing': '#b0b0b0', 'working': '#2d7dd2', 'failed': '#c0392b'}
+        overrides = getattr(self, 'agent_overrides', {})
+        for row, info in enumerate(infos):
+            state, detail = overrides.get(info.key, (info.state, info.detail))
+            tk.Label(self.agent_rows, text='●', fg=colors.get(state, '#8a8a8a'), font=('Segoe UI', 13)).grid(row=row, column=0, sticky='w', padx=(0, 8), pady=3)
+            text = ttk.Frame(self.agent_rows); text.grid(row=row, column=1, sticky='w')
+            ttk.Label(text, text=info.title).grid(sticky='w')
+            ttk.Label(text, text=detail, foreground='#666').grid(sticky='w')
+            actions = ttk.Frame(self.agent_rows); actions.grid(row=row, column=2, sticky='e', padx=(14, 0))
+            busy = getattr(self, 'agent_busy', None)
+            if state == 'working' or busy:
+                ttk.Label(actions, text='…').grid()
+            elif state == 'connected':
+                ttk.Button(actions, text='Reconectar', command=lambda kind=info.key: self.agent_action(kind, 'connect')).grid(row=0, column=0, padx=(0, 4))
+                ttk.Button(actions, text='Desconectar', command=lambda kind=info.key: self.agent_action(kind, 'disconnect')).grid(row=0, column=1)
+            elif state == 'missing':
+                ttk.Label(actions, text='Instala su CLI para conectarlo', foreground='#777').grid()
+            else:
+                ttk.Button(actions, text='Conectar', command=lambda kind=info.key: self.agent_action(kind, 'connect')).grid()
+        self.agent_rows.columnconfigure(1, weight=1)
+        warnings = getattr(self, 'agent_warnings', [])
+        if warnings:
+            self.agent_status.configure(text='\n'.join(warnings), foreground='#a15c00')
+        else:
+            self.agent_status.configure(text='Conecta Prisma con cada agente desde aquí. Instala sus hooks e instrucciones en tu carpeta de usuario; reinicia las sesiones abiertas para que tomen los cambios.', foreground='#666')
+    def agent_action(self, kind, action):
+        if getattr(self, 'agent_busy', None): return
+        self.agent_busy = kind
+        self.agent_warnings = []
+        self.agent_overrides = dict(getattr(self, 'agent_overrides', {}))
+        self.agent_overrides[kind] = ('working', 'Conectando…' if action == 'connect' else 'Desconectando…')
+        self.refresh_agents()
+        threading.Thread(target=self.agent_worker, args=(kind, action), daemon=True).start()
+    def agent_worker(self, kind, action):
+        try:
+            warnings = agents.connect(kind) if action == 'connect' else (agents.disconnect(kind) or [])
+            self.events.put(('agent-done', (kind, warnings, '')))
+        except Exception as error:
+            logging.exception('No se pudo configurar %s', kind)
+            self.events.put(('agent-done', (kind, [], str(error))))
+    def agent_finished(self, kind, warnings, error):
+        self.agent_busy = None
+        self.agent_overrides = {key: value for key, value in getattr(self, 'agent_overrides', {}).items() if key != kind}
+        self.agent_warnings = ([f'No se pudo configurar {agents.TITLES[kind]}: {error}'] if error else list(warnings))
+        self.refresh_agents()
     def close(self):
         self.speech.stop(); self.server.shutdown(); self.server.server_close(); self.icon.stop()
         try:
