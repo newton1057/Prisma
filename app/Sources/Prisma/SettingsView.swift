@@ -5,6 +5,10 @@ struct SettingsView: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var appState: AppState
 
+    private static var shortVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+    }
+
     var body: some View {
         Form {
             Section("Voz") {
@@ -149,7 +153,7 @@ struct SettingsView: View {
 
             Section {
                 HStack {
-                    Text("Prisma 1.0")
+                    Text("Prisma \(Self.shortVersion)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
