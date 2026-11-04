@@ -11,7 +11,7 @@
       "name": "prisma",
       "source": "./plugin",
       "description": "Muestra el orbe Prisma (estilo Siri AI iOS 27) y habla al terminar cada respuesta en Claude Code, Codex u OpenCode.",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "category": "productivity"
     }
   ]

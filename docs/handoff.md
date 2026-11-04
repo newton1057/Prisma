@@ -1,14 +1,15 @@
 # Handoff: orb animation and session orbs
 
-Date: 2026-11-01
+Date: 2026-11-04
 For: the next agent continuing work on Prisma (macOS)
 Technical reference: [Orb animation and session orbs](orb-and-sessions.md)
 
 ## 1. State of the repository
 
-- **Committed and pushed to `origin/main` (2026-11-01).** Includes thinking mode, unified 60 fps beam animation, persistent session orbs for Codex, Claude Code and OpenCode, compact inactive vs. active/hovered states with translucent glass, ten per-agent halo colour themes, click-to-focus terminal via TTY, offline renderer and test suites.
-- **Installed and running.** `install.sh` and `app/build.sh` were run on 2026-11-01. The app, support scripts, Claude Code plugin and OpenCode plugin all match the repository.
-- **Tests pass:** Swift (motion, themes, activity scale, window detection, Codex monitor), Python (hooks; Windows app), Node (OpenCode flow). Commands are in [section 8.1](orb-and-sessions.md#81-automated-tests) of the reference.
+- **v1.0.0 released.** Tag `v1.0.0` points at `5e9d152` on `origin/main`; the DMG is published in [Releases](https://github.com/newton1057/Prisma/releases/tag/v1.0.0) (SHA-256 `abae9fd3…`).
+- **Uncommitted 1.0.1 work.** The app now connects Codex, Claude Code and OpenCode from **Ajustes → Agentes** without the repository: `AgentConnections.swift`, a new section in `SettingsView.swift`, integration resources shipped in `Contents/Resources/plugin-dist`, `jq` warning, and `tests/test_agent_connections.swift`. Version bumped to 1.0.1 in `Info.plist`, the plugin manifests and `install.sh`, and the docs updated.
+- **Installed and running (1.0.0).** `install.sh` and `app/build.sh` were run on 2026-11-01. The app, support scripts and plugins match `5e9d152`; the 1.0.1 build has only been launched from `app/Prisma.app` for checks.
+- **Tests pass:** Swift (motion, themes, activity scale, window detection, Codex monitor, agent connections), Python (hooks; Windows app), Node (OpenCode flow). Commands are in [section 8.1](orb-and-sessions.md#81-automated-tests) of the reference.
 
 ## 2. What was done
 
@@ -57,6 +58,17 @@ Technical reference: [Orb animation and session orbs](orb-and-sessions.md)
    - Added `.left` (`Izquierda al centro (Columna)`) and `.right` (`Derecha al centro (Columna)`) vertical column layouts alongside `.top`, `.bottom`, `.center` and `.corner`.
    - Added Carbon global hotkeys (`RegisterEventHotKey`, no Accessibility permission required): `⌃⌥P` (`PositionShortcut`) to cycle orb positions smoothly, and `⌃⌥M` (`ScreenShortcut`) to send the orbs to the next connected display, plus explicit display selection in **Ajustes → Animación → Pantalla** (`targetDisplay`).
 
+### 1.0.1 session (2026-11-04)
+
+1. **Connect agents from Ajustes.**
+   - New `AgentConnections.swift`: `AgentConnector` (observable) and `AgentInstaller` (status, install, remove) for Codex, Claude Code and OpenCode.
+   - `SettingsView.swift` gained the **Agentes** section: status dot, detail, **Conectar** / **Reconectar** / **Desconectar**, a `jq` warning, and connection warnings.
+   - `app/build.sh` now copies `plugin/`, `.agents/` and `.claude-plugin/` into `Contents/Resources/plugin-dist`, so the DMG does not need the repository.
+   - The app stages those files in `~/Library/Application Support/Prisma/plugin-dist`, copies `on_stop.sh` and `on_turn.sh` to the support folder, and points both marketplaces at that copy.
+   - Codex: merges seven hook events into `~/.codex/hooks.json`, keeps other hooks, adds the instruction block to `~/.codex/AGENTS.md`, installs the plugin, and trusts the hook hashes through `codex app-server`. Claude Code: registers the marketplace, installs and enables the plugin, and adds the block to `~/.claude/CLAUDE.md`. OpenCode: copies the plugin and skill, then reloads.
+   - Detection is lenient: a Prisma marketplace installed from the repository also counts as connected.
+2. **Tests.** `tests/test_agent_connections.swift` covers the hook merge and idempotency, disconnect, instruction blocks, OpenCode files, status detection and missing CLIs. An isolated-HOME end-to-end run installed and removed all three agents with the real CLIs.
+
 ## 3. Resume work
 
 ```bash
@@ -77,15 +89,18 @@ cp -R app/Prisma.app ~/Applications/
 open ~/Applications/Prisma.app
 ```
 
-Session orbs reappear within 2 s: Codex `resume` clients and every Claude Code and OpenCode window are detected by process. Changes to `plugin/` need `./install.sh`; Claude Code runs its hooks from the plugin cache.
+Session orbs reappear within 2 s: Codex `resume` clients and every Claude Code and OpenCode window are detected by process. After changing `plugin/`, rebuild the app and press **Reconectar** in **Ajustes → Agentes** (or run `./install.sh`); Claude Code runs its hooks from the plugin cache.
 
 ## 4. Gotchas
 
 - **OpenCode's plugin runs in a daemon** (`opencode serve --service`). `process.pid` there is not a window, and there are no client connect or disconnect events. Window detection lives in Prisma (`OpenCodeWindows.swift`).
 - **Never use `minimumInterval: 1/60`** in `TimelineView`; see [section 3.3](orb-and-sessions.md#33-frame-rate) of the reference.
 - **Never scale `NSVisualEffectView` per frame** or reassign its properties in `updateNSView`; it re-renders its material.
-- **Claude Code** loads plugin hooks from `~/.claude/plugins/cache/prisma-local/prisma/1.0.0`. Running sessions keep the hook commands they started with but run the updated scripts at that path.
-- **Codex hooks must be trusted;** `install.sh` does it through the Codex app server.
+- **Claude Code** loads plugin hooks from `~/.claude/plugins/cache/prisma-local/prisma/<version>`. Running sessions keep the hook commands they started with but run the updated scripts at that path.
+- **Codex hooks must be trusted;** the app (`Ajustes → Agentes`) and `install.sh` do it through the Codex app server.
+- **Codex restarts its app server after `hooks/list`.** A request written after reading that answer gets `Broken pipe`; send the messages of each short session in one batch. `CODEX_HOME` must exist or app-server exits, and trust keys match the resolved path (`/private/var` vs `/var`), so resolve symlinks before comparing.
+- **`SIGPIPE` is ignored** in `main.swift` and in `CodexHookTrust.apply`; a helper that closes its input must not kill Prisma.
+- **The app's marketplaces point at `~/Library/Application Support/Prisma/plugin-dist`.** Editing `plugin/` in the repository does nothing until the app rebuilds and reconnects (or `install.sh` runs again).
 - **`install.sh` stops Prisma** with `pkill`. The `SIGTERM` handler restores ducked audio.
 - **Read the port from `runtime.json`;** it can change.
 - **Tests are audible.** Testing through the API speaks aloud and adds orbs. Use `engine: "apple"`, short texts, a test session id, and `POST /session/end` afterwards.

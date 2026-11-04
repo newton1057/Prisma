@@ -31,7 +31,7 @@ An animated floating orb appears with each notification. Prisma can also lower b
 
 ### macOS
 
-- **macOS 15 or later.** Prisma builds as a native Swift app.
+- **macOS 15 or later.** Prisma builds as a native Swift app. The published DMG is for Apple Silicon.
 - **Apple developer tools** with Swift, plus Git, Python 3 with `venv`, `curl`, and `jq`. For example, install the command line tools with `xcode-select --install` and `jq` with `brew install jq` if you use Homebrew.
 - At least one supported agent: Codex, Claude Code, or OpenCode.
 - Internet access to install dependencies, download the Piper model, and use Edge Neural TTS. Piper and the Apple voice can work offline once prepared.
@@ -46,7 +46,13 @@ An animated floating orb appears with each notification. Prisma can also lower b
 
 ### macOS
 
-Clone the repository and run both scripts from the project directory:
+Download the latest **Prisma.dmg** from [Releases](https://github.com/newton1057/Prisma/releases), drag **Prisma** to **Applications**, and open it. The published DMG is for Apple Silicon. The app is signed locally but not notarized, so the first launch may ask for confirmation: right-click → Open, or run:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Prisma.app
+```
+
+Without extra dependencies Prisma speaks with the system voice. For the neural voices (Edge and Piper), clone the repository and run `setup_voice.sh` once:
 
 ```bash
 git clone https://github.com/newton1057/Prisma.git ~/Desktop/Prisma
@@ -57,9 +63,13 @@ cd ~/Desktop/Prisma
 
 `setup_voice.sh` creates a Python environment, installs `piper-tts` and `edge-tts`, and downloads the Piper voice model (about 60 MB). The model is not included in the repository.
 
-`install.sh` builds and opens the app, copies it to `~/Applications/Prisma.app`, and prepares voice and configuration files in `~/Library/Application Support/Prisma/`. It also configures Codex's global hooks and instructions and, when detected, installs the Claude Code and OpenCode integrations. The installer may modify existing agent configuration; review [install.sh](install.sh) for details. Some plugin commands can fail without stopping the script, so verify each integration afterward.
+`install.sh` builds everything from source and copies it to `~/Applications/Prisma.app`, preparing voice and configuration files in `~/Library/Application Support/Prisma/`. It also configures the three agents directly; the app can do the same from its settings, as described below.
 
-> If you install an agent after Prisma, run `./install.sh` again to configure it. Restart the agent to load the changes.
+#### Connecting your agents
+
+Open **Prisma → Ajustes… → Agentes** and press **Conectar** next to Codex, Claude Code, or OpenCode. The app installs the hooks, instructions and plugin in your user folder (`~/.codex`, `~/.claude`, `~/.config/opencode`), so it does not need the repository or the DMG's contents afterward. Only the agent's CLI must be installed; when it is missing, the row says so instead of offering the button. **Desconectar** removes only Prisma's changes and leaves the rest of your agent configuration untouched.
+
+The hooks read their events with `jq`; if it is missing, Ajustes shows a warning and you can install it with `brew install jq`. Restart any open agent session to load the new hooks. If you install an agent after Prisma, come back to this section instead of rerunning the installer.
 
 To check the installation, select **Probar voz** (Test voice) from Prisma's menu bar icon, or run:
 
@@ -133,6 +143,7 @@ The current app interface uses Spanish labels. On macOS, open **Prisma → Ajust
 | **Background audio** | Enable or disable ducking and adjust its strength. |
 | **Animation** | Target display (any connected monitor, active display, or pointer display), global shortcut to switch displays (`⌃⌥M` by default), orb position (top/bottom row, left/right vertical column, center, or corner), global shortcut to cycle positions (`⌃⌥P` by default), thinking mode, and how long it stays visible afterward. |
 | **Halo color by agent** | Independent halo palette (10 themes) for Codex, Claude Code, and OpenCode across waiting, thinking, and voice states. |
+| **Agentes** | Connect or disconnect Codex, Claude Code, and OpenCode. Shows whether each integration is connected, incomplete, or unavailable because its CLI is not installed. |
 
 On macOS, ducking is enabled by default and affects the **output device's global volume**, including calls and notifications. By default, it lowers the volume to 35% of its previous level and restores it afterward. Devices whose volume cannot be controlled by macOS are skipped. See [Background audio](docs/audio-ducking.md) for details and limitations. Windows uses per-session ducking; see the [Windows guide](docs/windows.md).
 
@@ -156,7 +167,7 @@ For Windows, see the [Windows guide](docs/windows.md). The following tips apply 
 
 **I can't see or hear Prisma.** Open `~/Applications/Prisma.app` and select **Probar voz** (Test voice) from its menu. Check the output volume and confirm that the local server is active in settings.
 
-**The voice test works, but the agent doesn't notify me.** Restart the agent and rerun `./install.sh` if you installed it after Prisma. Check that its integration is enabled; the installer continues even if some plugin commands fail. The hook log is at `~/Library/Application Support/Prisma/hook.log`.
+**The voice test works, but the agent doesn't notify me.** Open **Ajustes → Agentes** and check that the agent says **Conectado**; reconnect it if not, then restart the agent. The hook log is at `~/Library/Application Support/Prisma/hook.log`.
 
 **Edge doesn't speak or I'm offline.** Try Piper or Apple in settings. If Piper cannot be found, run `./setup_voice.sh` followed by `./install.sh` and check again.
 

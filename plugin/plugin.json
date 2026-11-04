@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "prisma",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Habla en voz alta y muestra el orbe Prisma (estilo Siri AI iOS 27) al terminar un turno.",
   "author": {
     "name": "Newton"

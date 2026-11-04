@@ -1,12 +1,12 @@
 # Roadmap and product notes
 
-Last updated: 2026-11-01
+Last updated: 2026-11-04
 
 ## Current state
 
 The macOS app provides a floating Liquid Glass orb, Edge Ava Multilingual with Piper and Apple Paulina fallbacks, spoken summaries and interactive question notifications for OpenCode, Codex, and Claude Code, system audio ducking with voice compensation and restoration, and settings for voice, speed, position, visibility, and background audio. See [Background audio](audio-ducking.md) for the macOS implementation.
 
-Every Codex, Claude Code and OpenCode session has its own orb in a row: it waits between turns, thinks while the agent works, and turns into the voice horizon to speak. The three states are one beam of light that bends between shapes at 60 fps, and the row slides when orbs arrive or leave. See [Orb animation and session orbs](orb-and-sessions.md); the state of that work and the next steps are in the [handoff notes](handoff.md).
+Every Codex, Claude Code and OpenCode session has its own orb in a row: it waits between turns, thinks while the agent works, and turns into the voice horizon to speak. The three states are one beam of light that bends between shapes at 60 fps, and the row slides when orbs arrive or leave. Since 1.0.1 the app also connects each agent from **Ajustes → Agentes**, installing its hooks and plugin without the repository, so a DMG install can configure Codex, Claude Code and OpenCode on a clean Mac. See [Orb animation and session orbs](orb-and-sessions.md); the state of that work and the next steps are in the [handoff notes](handoff.md).
 
 A separate Windows implementation has been added with tray controls, a pulsing orb, voice backends, agent integrations, and per-session ducking. **It still needs end-to-end validation on Windows**; see the [Windows validation checklist](windows.md#validation).
 
@@ -64,6 +64,8 @@ Extract `SystemAudioDucker.restoreTarget` into a pure function and cover an in-p
 - The session registry in `AppDelegate` (owners, hand-over, deferred ends, OpenCode folders) is verified live only; extract it and add unit tests before extending it.
 - OpenCode windows are found by process scan because its plugin runs in a shared service; changes to OpenCode's command line or architecture can break the detection.
 - Claude Code interruptions are detected through a transcript marker that is not a documented interface.
+- The Codex hook-trust step uses the experimental `codex app-server` protocol (`hooks/list`, `config/batchWrite`); a Codex update can change it. The app falls back to a warning asking the user to approve the hooks.
+- Agent connections merge JSON and TOML by targeted edits rather than rewriting whole files; keep the unrelated-hook tests when touching `AgentConnections.swift`.
 
 ## Resume work on macOS
 
@@ -96,3 +98,7 @@ Check `/health` on the port in `runtime.json`, toggle and adjust **Ajustes → A
 | 2026-11-01 | Compact inactive orbs (0.34 scale, 50% opacity) vs active/hovered orbs (0.50 scale, 95% opacity) | Keeps many session orbs unobtrusive and lets the user see behind them while highlighting active or hovered orbs |
 | 2026-11-01 | Per-agent halo themes (10 palettes) and click-to-focus terminal via TTY | Lets the user tell Codex, Claude Code, and OpenCode orbs apart at a glance and jump straight to any session's terminal tab |
 | 2026-11-01 | Fused hover info chip, vertical side columns, display selection, and global hotkeys (`⌃⌥P`, `⌃⌥M`) | Shows session title + agent on hover fused to the orb, supports left/right vertical columns, and switches positions or monitors from any app |
+| 2026-11-04 | Connect agents from the app in Swift instead of calling `install.sh` | A DMG install has no repository, and writing hooks natively removes the `jq` dependency for configuration |
+| 2026-11-04 | Ship `plugin/`, `.agents/` and `.claude-plugin/` inside the app under `Contents/Resources/plugin-dist` | The app has a stable source for both marketplaces and can re-stage it after every update |
+| 2026-11-04 | Mark Codex hooks trusted with two batched `app-server` sessions | Codex restarts the server after `hooks/list`, so a later write on the same session fails |
+| 2026-11-04 | Accept any Prisma marketplace root for Claude Code | Installs made earlier from the repository must keep counting as connected |

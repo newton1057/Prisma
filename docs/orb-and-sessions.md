@@ -1,6 +1,6 @@
 # Orb animation and session orbs on macOS
 
-Date: 2026-11-01
+Date: 2026-11-04
 Status: implemented and verified on macOS 27.2 (Apple Silicon) with Codex, Claude Code and OpenCode 2.2.5. See the [handoff notes](handoff.md).
 
 This document describes how the macOS orb is drawn and animated, how the row of session orbs is laid out, and how each agent's sessions reach their orb. User-facing behavior is in the [README](../README.md#settings).
@@ -23,6 +23,7 @@ This document describes how the macOS orb is drawn and animated, how the row of 
 | `app/Sources/Prisma/OverlayView.swift` | Animation model (`OverlayModel`, `SmoothBlend`, `OrbMotion`), the orb view (`SiriLiquidGlassOrbView`) and the beam (`PrismaBeam`). |
 | `app/Sources/Prisma/OverlayController.swift` | One borderless panel per orb: show and hide, position in the row, sliding. |
 | `app/Sources/Prisma/AppDelegate.swift` | Session registry: which orb belongs to which session, process monitors, speech queue. |
+| `app/Sources/Prisma/AgentConnections.swift` | Connects Prisma with Codex, Claude Code and OpenCode from Ajustes: status, hooks, plugins, Codex hook trust. |
 | `app/Sources/Prisma/HTTPServer.swift` | Local API used by the hooks. |
 | `app/Sources/Prisma/CodexSessionsMonitor.swift` | `ps` snapshot; detects `codex resume <id>` clients. |
 | `app/Sources/Prisma/ClaudeCodeWindows.swift` | Detects open Claude Code windows (and a session named with `--resume`). |
@@ -157,7 +158,7 @@ All requests except `/health` need the `X-Prisma-Token` header (the token is in 
 - For OpenCode it forwards the session `directory`.
 - It only launches Prisma for a start or a turn, never for an interruption or an end.
 
-`on_stop.sh` adds the same `pid` for Claude Code replies. Codex hooks live in `~/.codex/hooks.json` (installed by `install.sh` with the `codex` argument); Claude Code hooks come from the plugin (`plugin/hooks/hooks.json`, cached in `~/.claude/plugins/cache/prisma-local/prisma/1.0.0`).
+`on_stop.sh` adds the same `pid` for Claude Code replies. Codex hooks live in `~/.codex/hooks.json` (written by **Ajustes → Agentes** or by `install.sh`); Claude Code hooks come from the plugin (`plugin/hooks/hooks.json`, cached under `~/.claude/plugins/cache/prisma-local/prisma/<version>`).
 
 ### 6.4 Claude Code
 
@@ -183,6 +184,18 @@ Every 2 s a background timer takes one `ps -axo pid=,args=` snapshot and then, o
 3. Gives new Claude Code and OpenCode windows their orbs, and ends idle OpenCode orphans.
 4. Checks the transcripts of thinking Claude Code orbs.
 
+### 6.7 Connecting agents from Ajustes
+
+**Ajustes → Agentes** configures each agent without the repository. The app ships the integrations in `Prisma.app/Contents/Resources/plugin-dist`; pressing **Conectar** copies them to `~/Library/Application Support/Prisma/plugin-dist`, copies `on_stop.sh` and `on_turn.sh` to the support folder and points the Codex and Claude Code marketplaces at that copy.
+
+| Agent | What **Conectar** does | What **Desconectar** removes |
+|---|---|---|
+| Codex | Merges the seven hook events into `~/.codex/hooks.json` keeping other hooks, adds the `<ForPrisma>` block to `~/.codex/AGENTS.md`, registers the marketplace and installs `prisma@prisma-local`, then marks the hook hashes as trusted through `codex app-server`. | Only the Prisma hook entries, the instruction block, and the plugin and marketplace it installed. |
+| Claude Code | Registers the marketplace, installs and enables `prisma@prisma-local`, and adds the block to `~/.claude/CLAUDE.md`. | Only that plugin, its marketplace entry and the instruction block. |
+| OpenCode | Copies `prisma.ts` to `~/.config/opencode/plugins/` and `SKILL.md` to `~/.config/opencode/skills/prisma/`, then runs `opencode reload`. | Those two files. |
+
+Each row reports *Conectado*, *Falta: …* for a partial install, or that the agent's CLI is missing. Claude Code counts as connected when any Prisma marketplace root holds `plugin/plugin.json`, so an install made earlier by `install.sh` from the repository also counts. The hooks depend on `jq`; when it is missing the section shows a warning instead of failing silently. Codex may restart its app server after answering `hooks/list`, so the trust step uses two short sessions with the messages batched in each.
+
 ## 7. Speech queue
 
 Requests are spoken one at a time in arrival order on the orb of their session (`playNextSpeech`); thinking ends when a session's speech starts. When an orb is handed over to a new session id, queued requests and the active speech move with it.
@@ -203,6 +216,10 @@ swiftc -parse-as-library app/Sources/Prisma/OpenCodeWindows.swift app/Sources/Pr
 # codex resume detection
 swiftc app/Sources/Prisma/CodexSessionsMonitor.swift tests/test_codex_sessions_monitor.swift \
   -o /tmp/prisma-codex && /tmp/prisma-codex
+
+# Ajustes → Agentes: hook merge, instruction blocks, OpenCode files and status detection
+swiftc -parse-as-library app/Sources/Prisma/AgentConnections.swift app/Sources/Prisma/Config.swift \
+  tests/test_agent_connections.swift -o /tmp/prisma-agents && /tmp/prisma-agents
 
 # Hook scripts (macOS) and the Windows app
 python3 -m unittest discover -s tests

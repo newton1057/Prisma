@@ -4,6 +4,7 @@ import AppKit
 struct SettingsView: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var appState: AppState
+    @StateObject private var agents = AgentConnector()
 
     private static var shortVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
@@ -11,6 +12,44 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section {
+                ForEach(agents.connections) { connection in
+                    AgentConnectionRow(
+                        connection: connection,
+                        isWorking: agents.working == connection.kind,
+                        onConnect: { agents.connect(connection.kind) },
+                        onDisconnect: { agents.disconnect(connection.kind) }
+                    )
+                }
+
+                if !agents.jqAvailable {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text("Falta jq, que los hooks usan para leer los eventos. Instálalo con: brew install jq")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                ForEach(agents.lastWarnings, id: \.self) { warning in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "info.circle")
+                            .foregroundStyle(.orange)
+                        Text(warning)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            } header: {
+                Text("Agentes")
+            } footer: {
+                Text("Conecta Prisma con cada agente desde la app. Instala los hooks y el plugin en tu carpeta de usuario, sin depender del repositorio. Reinicia las sesiones abiertas para que tomen los hooks nuevos.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Voz") {
                 Picker("Motor", selection: $settings.voice) {
                     ForEach(VoiceEngine.allCases) { engine in
@@ -166,6 +205,59 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 580, height: 880)
+        .onAppear { agents.refresh() }
+    }
+}
+
+private struct AgentConnectionRow: View {
+    let connection: AgentConnection
+    let isWorking: Bool
+    let onConnect: () -> Void
+    let onDisconnect: () -> Void
+
+    private var statusColor: Color {
+        switch connection.state {
+        case .connected: return .green
+        case .incomplete: return .orange
+        case .agentMissing: return .gray
+        case .failed: return .red
+        case .working: return .blue
+        case .disconnected: return .secondary
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(statusColor)
+                .frame(width: 8, height: 8)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(connection.kind.title)
+                Text(connection.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer()
+
+            if isWorking {
+                ProgressView()
+                    .controlSize(.small)
+            } else if connection.state.isConnected {
+                Button("Reconectar", action: onConnect)
+                Button("Desconectar", action: onDisconnect)
+            } else if case .agentMissing = connection.state {
+                Text("Instala su CLI para conectarlo")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Button("Conectar", action: onConnect)
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(.vertical, 2)
     }
 }
 

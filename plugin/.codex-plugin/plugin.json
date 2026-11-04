@@ -1,6 +1,6 @@
 {
   "name": "prisma",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Habla en voz alta y muestra el orbe Prisma al terminar un turno.",
   "hooks": "./hooks/hooks.json",
   "skills": "./skills/"

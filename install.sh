@@ -145,7 +145,7 @@ def wait_id(target_id):
 
 updates = {}
 try:
-    send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "prisma-installer", "version": "1.0.0"}}})
+    send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "prisma-installer", "version": "1.0.1"}}})
     wait_id(1)
     send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
     send({"jsonrpc": "2.0", "id": 2, "method": "hooks/list", "params": {"cwds": [cwd]}})
@@ -232,7 +232,7 @@ if updates and os.path.exists(sock_path):
                 data = rx(n)
             return json.loads(data.decode("utf-8"))
 
-        ws_send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "prisma-installer", "version": "1.0.0"}}})
+        ws_send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "prisma-installer", "version": "1.0.1"}}})
         while ws_recv().get("id") != 1:
             pass
         ws_send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
