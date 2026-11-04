@@ -25,8 +25,8 @@ Instalación desde este ZIP
 2. Abre la carpeta Prisma y haz doble clic en "Instalar Prisma.cmd".
 3. Si Windows SmartScreen avisa, elige "Más información" y "Ejecutar de
    todos modos". El instalador solo ejecuta los archivos de esta carpeta.
-4. Espera a que descargue Python, las dependencias y la voz Piper. La
-   primera instalación puede tardar varios minutos.
+4. Espera a que cree el entorno y descargue las dependencias y la voz
+   Piper. La primera instalación puede tardar varios minutos.
 5. Al terminar se crea un acceso en el menú Inicio y Prisma se abre en la
    bandeja del sistema.
 
