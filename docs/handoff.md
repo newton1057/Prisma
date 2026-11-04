@@ -7,9 +7,10 @@ Technical reference: [Orb animation and session orbs](orb-and-sessions.md)
 ## 1. State of the repository
 
 - **v1.0.0 released.** Tag `v1.0.0` points at `5e9d152` on `origin/main`; the DMG is published in [Releases](https://github.com/newton1057/Prisma/releases/tag/v1.0.0) (SHA-256 `abae9fd3…`).
-- **Uncommitted 1.0.1 work.** The app now connects Codex, Claude Code and OpenCode from **Ajustes → Agentes** without the repository: `AgentConnections.swift`, a new section in `SettingsView.swift`, integration resources shipped in `Contents/Resources/plugin-dist`, `jq` warning, and `tests/test_agent_connections.swift`. Version bumped to 1.0.1 in `Info.plist`, the plugin manifests and `install.sh`, and the docs updated.
-- **Installed and running (1.0.0).** `install.sh` and `app/build.sh` were run on 2026-11-01. The app, support scripts and plugins match `5e9d152`; the 1.0.1 build has only been launched from `app/Prisma.app` for checks.
-- **Tests pass:** Swift (motion, themes, activity scale, window detection, Codex monitor, agent connections), Python (hooks; Windows app), Node (OpenCode flow). Commands are in [section 8.1](orb-and-sessions.md#81-automated-tests) of the reference.
+- **v1.0.1 released (macOS).** Tag `v1.0.1` points at `94bb53b`; the DMG is published in [Releases](https://github.com/newton1057/Prisma/releases/tag/v1.0.1) (SHA-256 `455eff272ee804a6795061cb7e95ba49091c0af250aa237a9443fcb488976a54`). The app connects Codex, Claude Code and OpenCode from **Ajustes → Agentes** without the repository.
+- **Windows 1.0.1 released.** Tag `windows-v1.0.1` points at `fc9b9c1`; `Prisma-Windows-1.0.1.zip` is published in [Releases](https://github.com/newton1057/Prisma/releases/tag/windows-v1.0.1) (SHA-256 `e6ed0274408316e63f2737d2f3a533e9d4172a8cdfd9c139c728691c5d584ddf`). It is intentionally **not** marked Latest so the macOS DMG stays Latest. The ZIP adds the Windows **Ajustes → Agentes** section and a portable plugin copy; it still needs end-to-end validation on a real Windows machine.
+- **Installed and running (1.0.1).** `~/Applications/Prisma.app` is the 1.0.1 build on this Mac. The support scripts and plugins are installed from the 1.0.1 work.
+- **Tests pass:** Swift (motion, themes, activity scale, window detection, Codex monitor, agent connections), Python (hooks; Windows app and agent connections, 26 tests), Node (OpenCode flow). Commands are in [section 8.1](orb-and-sessions.md#81-automated-tests) of the reference.
 
 ## 2. What was done
 
@@ -69,6 +70,19 @@ Technical reference: [Orb animation and session orbs](orb-and-sessions.md)
    - Detection is lenient: a Prisma marketplace installed from the repository also counts as connected.
 2. **Tests.** `tests/test_agent_connections.swift` covers the hook merge and idempotency, disconnect, instruction blocks, OpenCode files, status detection and missing CLIs. An isolated-HOME end-to-end run installed and removed all three agents with the real CLIs.
 
+### Windows 1.0.1 session (2026-11-04)
+
+1. **Agent connections in Ajustes.**
+   - New `windows/agents.py`: status, connect and disconnect for Codex, Claude Code and OpenCode, plus `ensure_support()` to copy the runtime and stage `plugin/` under `%LOCALAPPDATA%\Prisma\plugin-dist`.
+   - Codex: merges `Stop`, `PreToolUse` and `PermissionRequest` hooks, keeps unrelated hooks, backs up the file, appends the instruction block and trusts the hashes through two batched `codex app-server` sessions. Failure only produces a warning; Codex can still ask for approval.
+   - Claude Code: merges the same hooks into `settings.json`, appends the block to `CLAUDE.md` and removes only Prisma's changes on disconnect.
+   - OpenCode: copies `plugins\prisma.ts` and `skills\prisma\SKILL.md`, compares the installed plugin with the staged copy and runs `opencode reload` when the CLI is available.
+   - The installer now calls `agents.connect()` for the agents it detects instead of duplicating hook logic. `windows/common.py` exposes `VERSION = '1.0.1'`, used by `/health` and the settings footer.
+2. **Windows UI.** `windows/app.py` gained an **Agentes** section with status dots, details, **Conectar** / **Reconectar** / **Desconectar**, warnings, a background worker and an `agent-done` event. The dialog stays responsive while Codex is trusted.
+3. **Packaging.** `windows/LEEME.txt`, `windows/install.cmd` and `tools/package-windows.sh` produce `dist/Prisma-Windows-1.0.1.zip` with the `Prisma` folder, `Instalar Prisma.cmd`, `windows/` and `plugin/`. `dist/` is ignored by git.
+4. **Tests.** `tests/test_windows.py` now covers Codex merge/idempotency/backup/removal, instruction blocks, Claude and OpenCode round trips, missing CLI, staged runtime, the two-session trust protocol with a fake app server, and the UI worker. A simulated install from the generated ZIP with isolated `CODEX_HOME` and `CLAUDE_CONFIG_DIR` and the real Codex and Claude CLIs ended with both connected before cleanup. The real Codex trust path was also checked against Codex 0.166.0 with a temporary `CODEX_HOME`.
+5. **Pending validation.** None of this has run on real Windows yet. Check the installer and `Instalar Prisma.cmd`, the tray and Ajustes layout, the three agent connections, Codex trust, and voice playback before calling Windows 1.0.1 stable.
+
 ## 3. Resume work
 
 ```bash
@@ -91,6 +105,12 @@ open ~/Applications/Prisma.app
 
 Session orbs reappear within 2 s: Codex `resume` clients and every Claude Code and OpenCode window are detected by process. After changing `plugin/`, rebuild the app and press **Reconectar** in **Ajustes → Agentes** (or run `./install.sh`); Claude Code runs its hooks from the plugin cache.
 
+To rebuild the Windows release ZIP:
+
+```bash
+./tools/package-windows.sh   # dist/Prisma-Windows-<version>.zip
+```
+
 ## 4. Gotchas
 
 - **OpenCode's plugin runs in a daemon** (`opencode serve --service`). `process.pid` there is not a window, and there are no client connect or disconnect events. Window detection lives in Prisma (`OpenCodeWindows.swift`).
@@ -99,6 +119,8 @@ Session orbs reappear within 2 s: Codex `resume` clients and every Claude Code a
 - **Claude Code** loads plugin hooks from `~/.claude/plugins/cache/prisma-local/prisma/<version>`. Running sessions keep the hook commands they started with but run the updated scripts at that path.
 - **Codex hooks must be trusted;** the app (`Ajustes → Agentes`) and `install.sh` do it through the Codex app server.
 - **Codex restarts its app server after `hooks/list`.** A request written after reading that answer gets `Broken pipe`; send the messages of each short session in one batch. `CODEX_HOME` must exist or app-server exits, and trust keys match the resolved path (`/private/var` vs `/var`), so resolve symlinks before comparing.
+- **`windows/agents.py` reads `CODEX_HOME`, `CLAUDE_CONFIG_DIR` and `XDG_CONFIG_HOME` when imported.** Tests patch the module attributes; a real Codex trust test must also set `CODEX_HOME` in the environment because `codex app-server` inherits it.
+- **The Windows installer requires Python 3.11 or 3.12** with Tkinter and the `py` launcher; `install.ps1` does not use Python 3.13.
 - **`SIGPIPE` is ignored** in `main.swift` and in `CodexHookTrust.apply`; a helper that closes its input must not kill Prisma.
 - **The app's marketplaces point at `~/Library/Application Support/Prisma/plugin-dist`.** Editing `plugin/` in the repository does nothing until the app rebuilds and reconnects (or `install.sh` runs again).
 - **`install.sh` stops Prisma** with `pkill`. The `SIGTERM` handler restores ducked audio.
