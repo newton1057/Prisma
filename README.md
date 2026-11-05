@@ -85,7 +85,7 @@ Then start or restart an agent and ask it to complete a short task. To check que
 
 Prisma checks `https://storage.googleapis.com/prisma-updates/latest.json` on launch and every six hours. The manifest is signed with a key that stays in the publisher's keychain; before replacing the app, Prisma verifies the signature, the file size, the SHA-256 and the bundle identifier. If the update cannot be installed, **Ajustes** offers the GitHub DMG as a manual fallback. The menu bar also shows **Buscar actualizaciones…**, or **Actualizar a la versión X…** when one is available.
 
-The first version with the updater must be installed by hand: earlier versions do not know how to update themselves. Updates are only enabled for the packaged app in `Applications` or `~/Applications`, not for the development copy next to `Package.swift`.
+The first version with the updater, 1.0.2, must be installed by hand: earlier versions do not know how to update themselves. Updates are only enabled for the packaged app in `Applications` or `~/Applications`, not for the development copy next to `Package.swift`.
 
 To publish a version, bump `CFBundleShortVersionString` and `CFBundleVersion` in `app/Info.plist`, commit and push, then run:
 
