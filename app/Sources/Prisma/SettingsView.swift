@@ -4,14 +4,25 @@ import AppKit
 struct SettingsView: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var appState: AppState
+    @ObservedObject var updater: Updater
     @StateObject private var agents = AgentConnector()
 
     private static var shortVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
     }
 
+    private static var buildVersion: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+    }
+
     var body: some View {
         Form {
+            if updater.state != .idle {
+                Section {
+                    UpdateBanner(updater: updater, busy: appState.isSpeaking)
+                }
+            }
+
             Section {
                 ForEach(agents.connections) { connection in
                     AgentConnectionRow(
@@ -201,10 +212,13 @@ struct SettingsView: View {
 
             Section {
                 HStack {
-                    Text("Prisma \(Self.shortVersion)")
+                    Text("Prisma \(Self.shortVersion) (\(Self.buildVersion))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
+                    Button("Buscar actualizaciones…") {
+                        Task { await updater.check(manually: true) }
+                    }
                     Button("Salir de Prisma") {
                         appState.quit()
                     }

@@ -8,6 +8,7 @@ final class AppState: ObservableObject {
     @Published var serverRunning = false
     @Published var serverStatus = "Iniciando…"
     @Published var piperReady = false
+    @Published var isSpeaking = false
 
     var testVoice: () -> Void = {}
     var stopSpeaking: () -> Void = {}
@@ -15,6 +16,7 @@ final class AppState: ObservableObject {
     var quit: () -> Void = {}
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var settingsWindow: NSWindow?
@@ -24,6 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var config: AppConfig!
     private var overlay: OverlayController!
     private var speech: SpeechController!
+    private var updater: Updater!
+    private var updaterMenuItem: NSMenuItem?
+    private var updaterCancellable: AnyCancellable?
     private var server: HTTPServer?
     private var thinkingSession: String?
     private var thinkingTimeout: DispatchWorkItem?
@@ -85,6 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         speech.onFinish = { [weak self] in
             let finished = self?.activeSpeechSession
             self?.isSpeaking = false
+            AppActivity.running = false
+            self?.appState.isSpeaking = false
             self?.activeSpeechSession = nil
             if let finished { self?.finishClosingSessionIfReady(finished) }
             self?.playNextSpeech()
@@ -99,12 +106,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState.openSettings = { [weak self] in self?.showSettings() }
         appState.quit = { NSApp.terminate(nil) }
 
+        updater = Updater()
+        updaterCancellable = updater.$state
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in self?.updateUpdaterMenuItem(state) }
+
         appState.piperReady = FileManager.default.fileExists(atPath: settings.piperModelPath)
             && FileManager.default.isExecutableFile(atPath: settings.piperPythonPath)
 
         Self.shared = self
         setupStatusItem()
         startServer()
+        Task { [weak self] in await self?.updater.watch() }
+        if CommandLine.arguments.contains("--actualizar") {
+            Task { [weak self] in
+                guard let self else { return }
+                await self.updater.check(manually: true)
+                if case .available(let manifest) = self.updater.state {
+                    self.updater.install(manifest)
+                }
+            }
+        }
         startSessionMonitor()
         startHoverMonitor()
         installHotKeyHandler()
@@ -136,10 +158,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            self.overlay.rowScreen = self.settings.resolvedScreen()
-            self.overlay.reposition()
-            self.arrangeSessions()
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.overlay.rowScreen = self.settings.resolvedScreen()
+                self.overlay.reposition()
+                self.arrangeSessions()
+            }
         }
         installTerminationHandler()
         cleanupOldTempFiles()
@@ -865,12 +889,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         speech.selectOverlay(target)
         activeSpeechSession = request.session_id
         isSpeaking = true
+        AppActivity.running = true
+        appState.isSpeaking = true
         let started = speech.speak(text: request.text, mode: settings.mode, cwd: request.cwd,
                                    sessionID: request.session_id, engineOverride: request.engine,
                                    voiceOverride: request.voice)
         target.model.isThinking = false
         if !started {
             isSpeaking = false
+            AppActivity.running = false
+            appState.isSpeaking = false
             activeSpeechSession = nil
             if let id = request.session_id { finishClosingSessionIfReady(id) }
             playNextSpeech()
@@ -906,6 +934,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Probar voz", action: #selector(testVoiceAction), keyEquivalent: "t"))
+        let updates = NSMenuItem(title: "Buscar actualizaciones…", action: #selector(checkForUpdatesAction), keyEquivalent: "")
+        updaterMenuItem = updates
+        menu.addItem(updates)
         menu.addItem(NSMenuItem(title: "Detener", action: #selector(stopAction), keyEquivalent: "."))
         menu.addItem(NSMenuItem(title: "Cambiar posición de los orbes", action: #selector(cyclePositionAction), keyEquivalent: "p"))
         menu.addItem(NSMenuItem(title: "Cambiar de pantalla", action: #selector(cycleScreenAction), keyEquivalent: "m"))
@@ -1002,9 +1033,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState.testVoice()
     }
 
+    @objc private func checkForUpdatesAction() {
+        Task { [weak self] in await self?.updater.check(manually: true) }
+    }
+
+    @objc private func installUpdateAction() {
+        guard case .available(let manifest) = updater.state else { return }
+        updater.install(manifest)
+    }
+
+    /// The menu reflects the updater without opening Ajustes.
+    private func updateUpdaterMenuItem(_ state: Updater.State) {
+        guard let item = updaterMenuItem else { return }
+        switch state {
+        case .available(let manifest):
+            item.title = "Actualizar a la versión \(manifest.version)…"
+            item.action = #selector(installUpdateAction)
+            item.isEnabled = true
+        case .downloading, .installing:
+            item.title = "Actualizando Prisma…"
+            item.action = nil
+            item.isEnabled = false
+        default:
+            item.title = "Buscar actualizaciones…"
+            item.action = #selector(checkForUpdatesAction)
+            item.isEnabled = true
+        }
+    }
+
     private func stopAll() {
         speechQueue.removeAll()
         isSpeaking = false
+        AppActivity.running = false
+        appState.isSpeaking = false
         activeSpeechSession = nil
         thinkingTimeout?.cancel()
         thinkingSession = nil
@@ -1039,7 +1100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.isReleasedWhenClosed = false
             window.center()
             window.contentView = NSHostingView(
-                rootView: SettingsView(settings: settings, appState: appState)
+                rootView: SettingsView(settings: settings, appState: appState, updater: updater)
             )
             settingsWindow = window
         }

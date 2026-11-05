@@ -88,7 +88,10 @@ enum AppPaths {
         .appendingPathComponent("Desktop/Prisma", isDirectory: true)
 
     static let appSupport: URL = {
-        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        // A test copy must not touch the real runtime or configuration.
+        let override = ProcessInfo.processInfo.environment["PRISMA_APP_SUPPORT"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let url = override ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("Prisma", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url

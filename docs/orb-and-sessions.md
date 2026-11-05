@@ -226,6 +226,9 @@ python3 -m unittest discover -s tests
 
 # OpenCode plugin flow with a mocked OpenCode
 node tests/test_opencode_flow.mjs
+
+# Update manifest signature, tampering and SHA-256
+(cd app && swift test)
 ```
 
 ### 8.2 Offline renderer

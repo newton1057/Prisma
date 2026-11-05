@@ -107,3 +107,7 @@ Check `/health` on the port in `runtime.json`, toggle and adjust **Ajustes → A
 | 2026-11-04 | Windows stages `plugin/` and its runtime under `%LOCALAPPDATA%\Prisma\plugin-dist` | Ajustes and the hooks must work after the ZIP folder is moved or deleted |
 | 2026-11-04 | Windows release is a ZIP and a separate `windows-v1.0.1` tag marked not-latest | A Windows EXE cannot be built from macOS, and the macOS DMG remains the Latest release |
 | 2026-11-04 | Document agent connections as local-session only | Cloud and remote sessions do not execute local hooks; the desktop apps were not validated |
+| 2026-11-04 | Update from a dedicated public bucket with a signed manifest, keeping the DMG on GitHub | The bucket can be checked without authentication; the signature prevents a tampered package from being installed |
+| 2026-11-04 | One signing key per app, stored in the login keychain | Sharing IconicOS Studio's key would let a leak affect both apps |
+| 2026-11-04 | Disable the updater in the development copy next to `Package.swift` | A local build must not replace itself or depend on a release bucket |
+| 2026-11-04 | The first updater version is installed by hand | Earlier versions do not contain the updater |

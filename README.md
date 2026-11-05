@@ -81,6 +81,20 @@ To check the installation, select **Probar voz** (Test voice) from Prisma's menu
 
 Then start or restart an agent and ask it to complete a short task. To check question notifications, ask it to use an interactive question tool.
 
+### Automatic updates (macOS)
+
+Prisma checks `https://storage.googleapis.com/prisma-updates/latest.json` on launch and every six hours. The manifest is signed with a key that stays in the publisher's keychain; before replacing the app, Prisma verifies the signature, the file size, the SHA-256 and the bundle identifier. If the update cannot be installed, **Ajustes** offers the GitHub DMG as a manual fallback. The menu bar also shows **Buscar actualizaciones…**, or **Actualizar a la versión X…** when one is available.
+
+The first version with the updater must be installed by hand: earlier versions do not know how to update themselves. Updates are only enabled for the packaged app in `Applications` or `~/Applications`, not for the development copy next to `Package.swift`.
+
+To publish a version, bump `CFBundleShortVersionString` and `CFBundleVersion` in `app/Info.plist`, commit and push, then run:
+
+```bash
+./app/publicar.sh "What changed in this version"
+```
+
+This creates the DMG for GitHub and the signed ZIP for the bucket. The signing key lives in the login keychain under **Prisma actualizaciones**. A backup copy is kept at `~/Library/Application Support/Prisma/firma-actualizaciones.txt` with permissions `600`, outside the repository and the app bundle. Restore it on another Mac with `app/.build/release/UpdateSigner restaurar <file>`; without that key no new version can be signed.
+
 ### Windows
 
 Download `Prisma-Windows-1.0.1.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm; choose **More info → Run anyway**. The installer needs no administrator rights.
