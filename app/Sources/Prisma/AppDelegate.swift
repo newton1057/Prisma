@@ -355,6 +355,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             && Date().timeIntervalSince(orbActivity[id] ?? .distantPast) > 20 {
             endSession(id, immediately: true)
         }
+        // A one-shot `opencode run` can exit before its end event reaches the
+        // plugin, leaving an orphan stuck thinking. Without a window process
+        // and after a long silence it leaves whatever its state is; a speech
+        // still playing or queued delays the close (finishClosingSessionIfReady),
+        // and a live client that returns later gets a fresh orb from its next
+        // event.
+        for id in openCodeOrbs where sessionProcesses[id] == nil
+            && Date().timeIntervalSince(orbActivity[id] ?? .distantPast) > 15 * 60 {
+            sessionOverlays[id]?.model.isThinking = false
+            endSession(id, immediately: true)
+        }
     }
 
     @discardableResult

@@ -399,6 +399,7 @@ export default {
             "session.execution.succeeded",
             "session.execution.failed",
             "session.execution.interrupted",
+            "session.error",
             "session.idle",
             "question.v2.asked",
             "question.asked",
@@ -432,7 +433,7 @@ export default {
 
             if (!sessionID) continue
 
-            if (eventType === "session.execution.failed" || eventType === "session.execution.interrupted") {
+            if (eventType === "session.execution.failed" || eventType === "session.execution.interrupted" || eventType === "session.error") {
               if (thinkingSessions.delete(sessionID)) await triggerTurn("Interrupt", sessionID)
               continue
             }

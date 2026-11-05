@@ -59,6 +59,14 @@ Technical reference: [Orb animation and session orbs](orb-and-sessions.md)
    - Added `.left` (`Izquierda al centro (Columna)`) and `.right` (`Derecha al centro (Columna)`) vertical column layouts alongside `.top`, `.bottom`, `.center` and `.corner`.
    - Added Carbon global hotkeys (`RegisterEventHotKey`, no Accessibility permission required): `⌃⌥P` (`PositionShortcut`) to cycle orb positions smoothly, and `⌃⌥M` (`ScreenShortcut`) to send the orbs to the next connected display, plus explicit display selection in **Ajustes → Animación → Pantalla** (`targetDisplay`).
 
+### 1.0.1 session (2026-11-04, evening): phantom OpenCode orbs
+
+1. **Diagnosis.** The app was healthy; three unclickable OpenCode orbs were orphan sessions from one-shot `opencode run` model tests (19:16, from a Claude Code scratchpad; two failed with a provider quota error, one succeeded). The runs die with SIGTERM ~15 ms after the turn, so no completion event reached the plugin and the orbs stayed thinking forever; the 20 s orphan reap skips thinking orbs (`canHandOver`). The three were ended live with `POST /session/end` using the real session ids from `session_v2` in `~/.local/share/opencode/opencode.db`.
+2. **Fixes.**
+   - `AppDelegate.updateOpenCodeWindows`: an OpenCode orphan with no window process also leaves after 15 minutes of silence regardless of state (speech still delays the close; a returning client gets a fresh orb).
+   - `plugin/opencode/prisma.ts`: subscribes to `session.error` (present in OpenCode 2.2.5, previously uncovered) and treats it like a failure → `Interrupt`.
+3. **Deployed.** App rebuilt and reinstalled (running build has the fix); plugin copied to `~/.config/opencode/plugins/` and `opencode reload` run. `tests/test_opencode_flow.mjs` passes. Verified live: 2 orbs for 2 real windows (an OpenCode TUI and a Claude Code TUI). The Claude marketplace still points at the repository and `plugin-dist` does not exist; harmless, pressing **Reconectar** in Ajustes would restage it.
+
 ### 1.0.1 session (2026-11-04)
 
 1. **Connect agents from Ajustes.**

@@ -172,8 +172,8 @@ OpenCode 2.x runs plugins inside one shared background service (`opencode serve 
 
 - `OpenCodeWindows` finds `opencode` processes that open a conversation (no subcommand, `run`, `attach`, or a path; not `serve`, `web`, `auth`, …). A helper started by another `opencode` process is not counted. Each window's folder is its working directory (`proc_pidinfo`).
 - Each window without an orb gets `opencode:<pid>`. A session event with a folder takes over an idle OpenCode orb whose window was opened in that folder or one of its subfolders: the waiting placeholder first, otherwise the orb idle the longest.
-- A session with no matching window gets an orb with no owner; a window detected later in that folder adopts it. An orphan that stays idle for 20 s leaves (for example, a reply that finishes after its window closed, or a client Prisma cannot see).
-- The plugin sends `SessionStart` on `session.created` (skipping subagents, which have a `parentID`), and `UserPromptSubmit` from its prompt hook, both with the session folder. Speech goes through `on_stop.sh` with `cwd`.
+- A session with no matching window gets an orb with no owner; a window detected later in that folder adopts it. An orphan that stays idle for 20 s leaves (for example, a reply that finishes after its window closed, or a client Prisma cannot see). An orphan with no window process also leaves after 15 minutes of silence whatever its state: a one-shot `opencode run` exits with SIGTERM about 15 ms after its turn, so its end event can reach the plugin before the process dies, and the orb would otherwise stay stuck thinking forever (seen 2026-11-04 with three model-test runs, two of them failed by an exhausted quota).
+- The plugin sends `SessionStart` on `session.created` (skipping subagents, which have a `parentID`), and `UserPromptSubmit` from its prompt hook, both with the session folder. Speech goes through `on_stop.sh` with `cwd`. Completion and failure events (`session.execution.*`, `session.error`, `session.idle`) clear thinking in interactive sessions; one-shot runs may still die before delivering them, which the 15-minute reap covers.
 
 ### 6.6 Monitors
 
