@@ -1,6 +1,6 @@
 # Handoff: orb animation and session orbs
 
-Date: 2026-11-04
+Date: 2026-11-05
 For: the next agent continuing work on Prisma (macOS)
 Technical reference: [Orb animation and session orbs](orb-and-sessions.md)
 
@@ -98,7 +98,7 @@ Technical reference: [Orb animation and session orbs](orb-and-sessions.md)
 1. **Bucket updater adapted from IconicOS Studio.** New `UpdateCore` (manifest, Ed25519 signature, SHA-256), `UpdateSigner` (keychain key, sign and verify), `Updater.swift` (ephemeral URLSession, manifest check, download, signature/size/hash/bundle check, installer script) and tests. `Package.swift` gains the three targets; `app/Info.plist` gains `PrismaUpdatesEnabled`.
 2. **App integration.** The updater checks at launch and every six hours, shows a banner in **Ajustes**, and adds **Buscar actualizaciones…** / **Actualizar a la versión X…** to the menu bar. It stays disabled in the development copy next to `Package.swift`; `PRISMA_ACTUALIZACIONES_URL` and `PRISMA_APP_SUPPORT` exist for local tests.
 3. **Publishing.** `app/empaquetar.sh` produces `dist/Prisma-<version>.zip` and `.dmg`; `app/publicar.sh` verifies the package, signs `latest.json`, publishes the DMG to GitHub and the ZIP + manifest to `prisma-updates`. `app/verificar_paquete.py` blocks credentials in the public package.
-4. **Verified and published.** 1.0.1 → 1.0.2 update and reopen; tampered manifest rejected; wrong `CFBundleIdentifier` rejected; read-only location rejected; package signature and `codesign --verify --deep --strict` pass. The bucket is created, the 1.0.2 DMG and manifest are published, and the real 1.0.2 app in `~/Applications` reports `al día`. Pending: the full step-9 checklist on another Mac and with a non-admin account, and a real 1.0.2 → next-version update (the first updater version could only be installed by hand).
+4. **Verified and published.** 1.0.1 → 1.0.2 update and reopen; tampered manifest rejected; wrong `CFBundleIdentifier` rejected; read-only location rejected; corrupted ZIP rejected (`el archivo descargado no coincide con la versión publicada`, installed version stayed 1.0.2); package signature and `codesign --verify --deep --strict` pass. The bucket is created, the 1.0.2 DMG and manifest are published, and the real 1.0.2 app in `~/Applications` reports `al día`. All local test apps, servers and temporary folders were removed afterwards. Pending: the full step-9 checklist on another Mac and with a non-admin account, and a real 1.0.2 → next-version update (the first updater version could only be installed by hand).
 
 ## 3. Resume work
 
