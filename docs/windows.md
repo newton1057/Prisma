@@ -12,7 +12,7 @@ This implementation adds a Windows system tray app using Prisma's local protocol
 
 ## Install and update
 
-Download `Prisma-Windows-1.0.2.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm because the script is not signed; choose **More info → Run anyway**. The installer does not need administrator rights.
+Download `Prisma-Windows-1.0.3.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm because the script is not signed; choose **More info → Run anyway**. The installer does not need administrator rights.
 
 To install from the repository instead, open PowerShell in the repository and run:
 
@@ -32,7 +32,15 @@ The installer configures the agents it finds:
 
 Other settings are preserved, and a `.prisma-backup` copy is created before modifying each configuration file. If an existing file is not valid JSON, installation stops to avoid overwriting it. Agent commands and integration mechanisms can change between versions; if an agent is updated, reconnect it from Ajustes.
 
-To update, close Prisma from its tray icon and run the new installer. It replaces the runtime files and the staged plugin but keeps the rest of your configuration and the virtual environment. Use the Start menu shortcut to open Prisma manually; hooks also try to start it when a notification arrives. The installer does not enable startup with Windows.
+To update from 1.0.2 or earlier, close Prisma from its tray icon and run the new installer once; versions before 1.0.3 have no updater. From 1.0.3 on, use **Ajustes → Actualizaciones** or the tray menu. The installer replaces the runtime files and the staged plugin but keeps the rest of your configuration and the virtual environment. Use the Start menu shortcut to open Prisma manually; hooks also try to start it when a notification arrives. The installer does not enable startup with Windows.
+
+## Automatic updates
+
+Starting with 1.0.3, Prisma checks for updates at launch and every six hours. It reads `windows-latest.json` from the public `prisma-updates` bucket and verifies its Ed25519 signature with the same key as the macOS app. Only a manifest whose `build` is greater than the one compiled into the app is offered, in **Ajustes → Actualizaciones** and in the tray menu. The download is accepted only if its size and SHA-256 match the signed manifest and the ZIP contains the announced version and build.
+
+The update replaces the Python runtime and the staged plugin under `%LOCALAPPDATA%\Prisma`, then reopens Prisma. Settings, the virtual environment, the voice model, and logs are left untouched. If new requirements fail to install, the previous runtime is restored. Installation waits until Prisma finishes speaking; otherwise a retry button appears. A manual **Buscar actualizaciones** reports whether the app is up to date, and **Descargar de GitHub** remains available as a fallback.
+
+The bucket manifest is published by `tools/publicar-windows.sh`, which signs the ZIP, uploads the GitHub release, stores the package under `windows/versiones/<version>/`, and writes `windows-latest.json` last. The Windows release is never marked Latest, so the macOS DMG keeps that slot.
 
 ## Connect agents from Ajustes
 
@@ -60,7 +68,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\test.ps1 -Engine p
 powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\test.ps1 -Engine windows
 ```
 
-The current interface uses Spanish labels. In **Ajustes**, change the engine, Edge voice, reading mode, speed, halo colour, orb position, visibility, and ducking. The `windows` engine uses a voice installed on the system; its language depends on Windows settings and installed voices. Edge defaults to Ava and supports `andrew`, `emma`, `brian`, `dalia`, `jorge`, `salome`, `ximena`, `alvaro`, and `elena`. If Edge fails, Prisma tries Piper and then the Windows voice; if Piper fails, it tries the Windows voice. The Piper model is a Spanish-language voice.
+The current interface uses Spanish labels. In **Ajustes**, change the engine, Edge voice, reading mode, speed, halo colour, orb position, visibility, and ducking, and use **Actualizaciones** to check for a new signed version. The `windows` engine uses a voice installed on the system; its language depends on Windows settings and installed voices. Edge defaults to Ava and supports `andrew`, `emma`, `brian`, `dalia`, `jorge`, `salome`, `ximena`, `alvaro`, and `elena`. If Edge fails, Prisma tries Piper and then the Windows voice; if Piper fails, it tries the Windows voice. The Piper model is a Spanish-language voice.
 
 ## The orb
 
@@ -79,6 +87,8 @@ The orb appears on the primary display. Windows ducking lowers existing audio se
 
 The server listens only on `127.0.0.1`, chooses a port from 8787 through 8798, and requires a token to speak or stop. The active port and token are stored in `%LOCALAPPDATA%\Prisma\runtime.json`, accessible to the local user. Edge sends notification text to its synthesis service; choose Piper or Windows for local synthesis. The installer downloads dependencies and the model from the internet. Piper and its dependencies have their own licenses; review them before redistributing the project.
 
+Updates read the manifest and download the ZIP over HTTPS from the public `prisma-updates` bucket. The request identifies the app as `Prisma-Windows` and sends no personal data. The manifest signature is checked before a package is downloaded, and the package hash is checked before anything is replaced. An invalid signature, a size or hash mismatch, a path outside the package, or a different version or build stops the update.
+
 ## Troubleshooting
 
 - **No tray icon:** find Prisma in the Start menu and check the hidden tray icons. See `%LOCALAPPDATA%\Prisma\prisma.log`.
@@ -86,9 +96,12 @@ The server listens only on `127.0.0.1`, chooses a port from 8787 through 8798, a
 - **Codex keeps asking to trust hooks:** the app-server trust step failed, usually because Codex is not on `PATH` for the app or its version changed. Open Codex and accept the hooks, or reconnect from Ajustes after checking the CLI.
 - **Edge is silent:** check the connection or select Piper or Windows. Piper needs both the `.onnx` model and its `.onnx.json` file.
 - **Another app's volume was not restored:** check the Windows volume mixer. You can disable ducking in settings.
+- **No se pudo comprobar la actualización:** check the internet connection, proxy, or firewall; the app reads `https://storage.googleapis.com/prisma-updates/windows-latest.json`. Retry from **Ajustes → Actualizaciones**.
+- **La versión publicada no tiene una firma válida:** do not install it. The manifest in the bucket was altered or replaced; report it and use the ZIP from GitHub Releases.
+- **Espera a que Prisma termine de hablar:** the update is deferred while speech is active. Let it finish and press **Reintentar**.
 - **The installer cannot find Python or Tkinter:** install Python with the components above and check that `py -3 -m tkinter` opens a window.
 - **The agent runs in WSL:** use a native Windows agent or configure an integration for that environment; the installer does not do this automatically.
 
 ## Validation
 
-Run the portable tests with `python -m unittest discover -s tests -v`. They cover text extraction, questions, hook configuration, the agent connection merge/removal and idempotency, OpenCode files, missing CLIs, the Codex trust protocol with a fake app server, orb rendering and transitions, layered-window packing, and the local protocol. To look at the renderer without the app, run `py -3 -m orb <folder>` from the `windows` folder; it writes one PNG per state. On a Windows machine, the remaining checks include a clean installation from the ZIP; all three agent integrations and their questions; token authentication and alternate ports; playback and cancellation for all three engines; the tray, the orb at every halo colour, its placement and click-through; and mixer restoration after manual changes and exits.
+Run the portable tests with `python -m unittest discover -s tests -v`. They cover text extraction, questions, hook configuration, the agent connection merge/removal and idempotency, OpenCode files, missing CLIs, the Codex trust protocol with a fake app server, orb rendering and transitions, layered-window packing, the signed update manifest and tamper rejection, safe ZIP extraction, runtime replacement with rollback, and the local protocol. To look at the renderer without the app, run `py -3 -m orb <folder>` from the `windows` folder; it writes one PNG per state. On a Windows machine, the remaining checks include a clean installation from the ZIP; all three agent integrations and their questions; token authentication and alternate ports; playback and cancellation for all three engines; the tray, the orb at every halo colour, its placement and click-through; mixer restoration after manual changes and exits; and an update from one published build to the next, including the reopen and the rollback path.

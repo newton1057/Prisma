@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import subprocess
 import sys
 import tempfile
 import threading
@@ -9,6 +10,8 @@ import unittest
 from unittest.mock import patch
 import urllib.error
 import urllib.request
+import hashlib
+import zipfile
 
 from PIL import Image, ImageChops, ImageStat
 
@@ -22,6 +25,7 @@ import install
 import orb
 import overlay
 import app
+import updater
 
 
 class TextTests(unittest.TestCase):
@@ -54,6 +58,7 @@ class ServerTests(unittest.TestCase):
                 health = json.load(r)
                 self.assertEqual(health['app'], 'Prisma')
                 self.assertEqual(health['version'], common.VERSION)
+                self.assertEqual(health['build'], common.BUILD)
             data = json.dumps({'text':'Hola'}).encode()
             with self.assertRaises(urllib.error.HTTPError) as e: urllib.request.urlopen(urllib.request.Request(base + '/speak', data=data))
             self.assertEqual(e.exception.code, 401)
@@ -384,6 +389,194 @@ class OverlayTests(unittest.TestCase):
         if os.name != 'nt':
             widget.start(); widget.show(); widget.set_theme('solar'); widget.hide(immediate=True); widget.stop()
             self.assertIsNone(widget._worker)
+
+
+class UpdateTests(unittest.TestCase):
+    # Signed by the real UpdateSigner with the same key the macOS app uses,
+    # over the six bytes "prueba". Keeping a real signature means a change in
+    # the signed text layout fails here, not in production.
+    SIGNED = {
+        'version': '1.0.3',
+        'build': 3,
+        'file': 'windows/versiones/1.0.3/Prisma-Windows-1.0.3.zip',
+        'size': 6,
+        'sha256': '655e786674d9d3e77bc05ed1de37b4b6bc89f788829f9f3c679e7687b410c89b',
+        'notes': 'Notas de prueba',
+        'signature': 'BxzAfm3ZH5HL3WvFxcTo8h+V2mi9+/EpJJPQ9P1qpxrdCAYrJm9m4kzYd4a3IJz53V1pRPeLaySjg2d2QImkBA==',
+    }
+
+    class Response:
+        status = 200
+        def __init__(self, payload): self.payload = payload; self.position = 0
+        def read(self, size=-1):
+            if size is None or size < 0: size = len(self.payload) - self.position
+            chunk = self.payload[self.position:self.position + size]
+            self.position += len(chunk)
+            return chunk
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+
+    class OneByteResponse(Response):
+        def read(self, size=-1): return super().read(1)
+
+    def signed(self, **changes):
+        return updater.Manifest.from_json(json.dumps({**self.SIGNED, **changes}))
+
+    def opener(self, payload, response=None):
+        response = response or self.Response
+        return lambda request, timeout=None: response(payload)
+
+    def test_published_manifest_has_a_valid_signature(self):
+        self.assertTrue(self.signed().is_valid())
+
+    def test_tampering_any_signed_field_breaks_the_signature(self):
+        changes = {
+            'version': '9.9.9',
+            'build': 99,
+            'file': 'windows/versiones/9.9.9/Prisma-Windows-9.9.9.zip',
+            'size': 7,
+            'sha256': '0' * 64,
+            'notes': 'Otras notas',
+        }
+        for field, value in changes.items():
+            self.assertFalse(self.signed(**{field: value}).is_valid(), field)
+        signature = self.SIGNED['signature']
+        altered = ('A' if signature[0] != 'A' else 'B') + signature[1:]
+        self.assertFalse(self.signed(signature=altered).is_valid())
+
+    def test_signed_text_uses_the_swift_field_order(self):
+        expected = '\n'.join([self.SIGNED['version'], '3', self.SIGNED['file'], '6',
+                              self.SIGNED['sha256'], self.SIGNED['notes']])
+        self.assertEqual(self.signed().signed_text(), expected)
+
+    def test_manifest_rejects_bad_types_and_paths(self):
+        for changes in ({'build': True}, {'build': '3'}, {'size': 0}, {'size': True},
+                        {'file': '../x.zip'}, {'file': '/x.zip'}, {'file': 'C:/x.zip'},
+                        {'file': 'windows//x.zip'}, {'sha256': 'x' * 64},
+                        {'signature': 'abc'}, {'version': '1.0.3\nx'}):
+            with self.assertRaises(updater.UpdateError, msg=changes):
+                self.signed(**changes)
+
+    def test_check_only_returns_newer_builds(self):
+        payload = json.dumps(self.SIGNED).encode()
+        self.assertIsNone(updater.check(3, opener=self.opener(payload)))
+        found = updater.check(2, opener=self.opener(payload))
+        self.assertEqual(found.version, '1.0.3')
+        self.assertEqual(found.build, 3)
+
+    def test_check_rejects_a_tampered_manifest(self):
+        payload = json.dumps({**self.SIGNED, 'notes': 'Otras notas'}).encode()
+        with self.assertRaises(updater.UpdateError):
+            updater.check(2, opener=self.opener(payload))
+
+    def test_download_reports_progress_and_verifies_the_size(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = self.signed(size=4, sha256=hashlib.sha256(b'abcd').hexdigest(),
+                                   file='windows/versiones/1.0.3/Prisma-Windows-1.0.3.zip')
+            destination = Path(directory) / 'update.zip'
+            progress = []
+            updater.download(manifest, destination, opener=self.opener(b'abcd', self.OneByteResponse),
+                             progress=progress.append)
+            self.assertEqual(destination.read_bytes(), b'abcd')
+            self.assertEqual(progress, [0.25, 0.5, 0.75, 1.0])
+            updater.verify_package(destination, manifest)
+            with self.assertRaises(updater.UpdateError):
+                updater.download(manifest, destination, opener=self.opener(b'abc'))
+            self.assertFalse(destination.exists())
+
+    def package(self, directory, version='1.0.3', build=3):
+        path = Path(directory) / 'Prisma-Windows.zip'
+        with zipfile.ZipFile(path, 'w') as archive:
+            archive.writestr('Prisma/windows/app.py', '# app\n')
+            archive.writestr('Prisma/windows/common.py', f"VERSION = '{version}'\nBUILD = {build}\n")
+            archive.writestr('Prisma/plugin/AGENTS.md', '# plugin\n')
+        data = path.read_bytes()
+        return path, len(data), hashlib.sha256(data).hexdigest()
+
+    def manifest_for(self, size, sha256, version='1.0.3', build=3):
+        return self.signed(version=version, build=build, size=size, sha256=sha256)
+
+    def test_prepare_requires_the_announced_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package, size, digest = self.package(directory)
+            manifest = self.manifest_for(size, digest)
+            staged = updater.prepare(package, manifest, Path(directory) / 'work')
+            self.assertEqual(updater.staged_version(staged), ('1.0.3', 3))
+            self.assertTrue((staged / 'windows' / 'app.py').is_file())
+            package, size, digest = self.package(directory, build=4)
+            with self.assertRaises(updater.UpdateError):
+                updater.prepare(package, self.manifest_for(size, digest), Path(directory) / 'other')
+            package, size, digest = self.package(directory)
+            with self.assertRaises(updater.UpdateError):
+                updater.prepare(package, self.manifest_for(size, '0' * 64), Path(directory) / 'third')
+
+    def test_extract_rejects_paths_outside_the_workspace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / 'evil.zip'
+            with zipfile.ZipFile(package, 'w') as archive:
+                archive.writestr('../evil.txt', 'x')
+            with self.assertRaises(updater.UpdateError):
+                updater.extract(package, root / 'out')
+            self.assertFalse((root / 'evil.txt').exists())
+            with zipfile.ZipFile(package, 'w') as archive:
+                archive.writestr('/evil.txt', 'x')
+            with self.assertRaises(updater.UpdateError):
+                updater.extract(package, root / 'out')
+
+    def test_install_files_keeps_settings_and_can_roll_back(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); support = root / 'Prisma'; staged = root / 'nuevo' / 'Prisma'
+            support.mkdir()
+            (support / 'app.py').write_text('old', encoding='utf-8')
+            (support / 'settings.json').write_text('{"theme":"solar"}', encoding='utf-8')
+            (support / 'venv' / 'Scripts').mkdir(parents=True)
+            (support / 'venv' / 'Scripts' / 'python.exe').write_text('python', encoding='utf-8')
+            (support / 'voices').mkdir()
+            (support / 'voices' / 'model.onnx').write_text('voice', encoding='utf-8')
+            (support / 'plugin-dist' / 'plugin').mkdir(parents=True)
+            (support / 'plugin-dist' / 'plugin' / 'AGENTS.md').write_text('old plugin', encoding='utf-8')
+            (staged / 'windows').mkdir(parents=True)
+            (staged / 'windows' / 'app.py').write_text('new', encoding='utf-8')
+            (staged / 'windows' / 'common.py').write_text("VERSION = '1.0.3'\nBUILD = 3\n", encoding='utf-8')
+            (staged / 'windows' / 'requirements.txt').write_text('Pillow>=10,<13\n', encoding='utf-8')
+            (staged / 'plugin').mkdir(parents=True)
+            (staged / 'plugin' / 'AGENTS.md').write_text('new plugin', encoding='utf-8')
+            self.assertTrue(updater.requirements_changed(staged, support))
+            changed = updater.install_files(staged, support)
+            self.assertIn('app.py', changed)
+            self.assertEqual((support / 'app.py').read_text(encoding='utf-8'), 'new')
+            self.assertEqual((support / 'settings.json').read_text(encoding='utf-8'), '{"theme":"solar"}')
+            self.assertEqual((support / 'venv' / 'Scripts' / 'python.exe').read_text(encoding='utf-8'), 'python')
+            self.assertEqual((support / 'voices' / 'model.onnx').read_text(encoding='utf-8'), 'voice')
+            self.assertEqual((support / 'plugin-dist' / 'plugin' / 'AGENTS.md').read_text(encoding='utf-8'), 'new plugin')
+            self.assertFalse(updater.requirements_changed(staged, support))
+            self.assertTrue((support / 'update-backup' / 'app.py').is_file())
+            self.assertTrue(updater.rollback(support))
+            self.assertEqual((support / 'app.py').read_text(encoding='utf-8'), 'old')
+            self.assertEqual((support / 'plugin-dist' / 'plugin' / 'AGENTS.md').read_text(encoding='utf-8'), 'old plugin')
+            self.assertEqual((support / 'settings.json').read_text(encoding='utf-8'), '{"theme":"solar"}')
+            self.assertFalse((support / 'update-backup').exists())
+
+    def test_finish_update_removes_the_backup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); support = root / 'Prisma'; staged = root / 'nuevo' / 'Prisma'
+            support.mkdir(); (support / 'app.py').write_text('old', encoding='utf-8')
+            (staged / 'windows').mkdir(parents=True)
+            (staged / 'windows' / 'app.py').write_text('new', encoding='utf-8')
+            updater.install_files(staged, support)
+            self.assertTrue((support / 'update-backup').is_dir())
+            updater.finish_update(support)
+            self.assertFalse((support / 'update-backup').exists())
+
+    def test_wait_for_exit_detects_a_finished_process(self):
+        process = subprocess.Popen([sys.executable, '-c', 'pass'])
+        process.wait()
+        self.assertTrue(updater.wait_for_exit(process.pid, timeout=2))
+
+    def test_version_and_build_are_set(self):
+        self.assertRegex(common.VERSION, r'^\d+\.\d+\.\d+$')
+        self.assertGreaterEqual(common.BUILD, 1)
 
 
 if __name__ == '__main__': unittest.main()

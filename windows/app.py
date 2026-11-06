@@ -6,18 +6,21 @@ import logging
 import os
 from pathlib import Path
 import queue
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import tkinter as tk
 from tkinter import ttk
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import agents
-from common import SUPPORT, RUNTIME, VERSION, runtime, speech_text
+from common import SUPPORT, RUNTIME, VERSION, BUILD, runtime, speech_text
 from orb import THEME_TITLES
 from overlay import OrbOverlay
+import updater
 
 SUPPORT.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(filename=SUPPORT / 'prisma.log', level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -27,6 +30,10 @@ DEFAULTS = {'engine': 'edge', 'voice': 'ava', 'mode': 'full', 'speed': 1.0, 'pos
 THEME_KEYS = {title: key for key, title in THEME_TITLES.items()}
 MODEL = SUPPORT / 'voices' / 'es_MX-claude-high.onnx'
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+# Updates only replace a copy that lives in the support folder; a checkout
+# launched from the repository is for development.
+INSTALLED = Path(__file__).resolve().parent == SUPPORT.resolve()
+RELEASES = 'https://github.com/newton1057/Prisma/releases'
 
 
 def load_settings():
@@ -51,7 +58,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
     def do_GET(self):
-        if self.path.split('?')[0] == '/health': self.reply(200, {'ok': True, 'app': 'Prisma', 'version': VERSION})
+        if self.path.split('?')[0] == '/health': self.reply(200, {'ok': True, 'app': 'Prisma', 'version': VERSION, 'build': BUILD})
         else: self.reply(404, {'ok': False})
     def do_POST(self):
         auth = self.headers.get('X-Prisma-Token', self.headers.get('X-CodexVoz-Token', ''))
@@ -184,6 +191,9 @@ class App:
         self.root = tk.Tk(); self.root.withdraw()
         self.events = queue.Queue(); self.settings = load_settings(); self.speech = Speech(self.events)
         self.agent_busy = None; self.agent_overrides = {}; self.agent_warnings = []
+        self.update_state = 'idle'; self.update_manifest = None; self.update_detail = ''
+        self.update_progress = 0; self.update_thread = None; self.updating = False
+        self.update_notified = None
         self.overlay = OrbOverlay(self.settings.get('theme', 'prisma'), self.settings['position'])
         try: self.overlay.start()
         except Exception: logging.exception('No se pudo iniciar el orbe')
@@ -198,14 +208,38 @@ class App:
         RUNTIME.write_text(json.dumps({'port': port, 'token': token, 'pid': os.getpid()}), encoding='utf-8')
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.tray(); self.root.after(50, self.poll)
+        self.root.after(5000, self.auto_update_check)
     def tray(self):
         import pystray
         from PIL import Image, ImageDraw
         img = Image.new('RGBA', (64, 64)); d = ImageDraw.Draw(img)
         d.ellipse((4, 4, 60, 60), fill='#4b40b9', outline='#a6e8ff', width=3)
         d.ellipse((15, 15, 49, 49), fill='#53a4dd')
-        menu = pystray.Menu(pystray.MenuItem('Probar voz', lambda icon, item: self.events.put(('speak', {'text': 'Hola. Prisma está funcionando en Windows.'}))), pystray.MenuItem('Ajustes', lambda icon, item: self.events.put(('settings', None)), default=True), pystray.MenuItem('Detener voz', lambda icon, item: self.events.put(('stop', None))), pystray.MenuItem('Salir', lambda icon, item: self.events.put(('quit', None))))
-        self.icon = pystray.Icon('Prisma', img, 'Prisma', menu); self.icon.run_detached()
+        self.icon = pystray.Icon('Prisma', img, 'Prisma', self.tray_menu()); self.icon.run_detached()
+    def tray_menu(self):
+        import pystray
+        if self.update_state == 'available' and self.update_manifest:
+            update = pystray.MenuItem(f'Actualizar a la versión {self.update_manifest.version}…', lambda icon, item: self.events.put(('update-install', None)))
+        elif self.update_state in ('checking', 'downloading', 'installing'):
+            text = 'Buscando actualizaciones…' if self.update_state == 'checking' else 'Actualizando Prisma…'
+            update = pystray.MenuItem(text, lambda icon, item: None, enabled=False)
+        else:
+            update = pystray.MenuItem('Buscar actualizaciones…', lambda icon, item: self.events.put(('update-check', True)))
+        return pystray.Menu(
+            pystray.MenuItem('Probar voz', lambda icon, item: self.events.put(('speak', {'text': 'Hola. Prisma está funcionando en Windows.'}))),
+            pystray.MenuItem('Ajustes', lambda icon, item: self.events.put(('settings', None)), default=True),
+            update,
+            pystray.MenuItem('Detener voz', lambda icon, item: self.events.put(('stop', None))),
+            pystray.MenuItem('Salir', lambda icon, item: self.events.put(('quit', None))),
+        )
+    def refresh_tray_menu(self):
+        if not hasattr(self, 'icon'): return
+        try:
+            self.icon.menu = self.tray_menu(); self.icon.update_menu()
+        except Exception: logging.exception('No se pudo actualizar el menú de la bandeja')
+    def notify(self, title, message):
+        try: self.icon.notify(message, title)
+        except Exception: logging.debug('No se pudo mostrar la notificación', exc_info=True)
     def poll(self):
         try:
             while True:
@@ -216,6 +250,11 @@ class App:
                 elif action == 'hide' and data == self.speech.serial: self.root.after(1200 if self.settings['stayVisible'] else 200, lambda s=data: self.hide_overlay() if s == self.speech.serial else None)
                 elif action == 'settings': self.show_settings()
                 elif action == 'agent-done': self.agent_finished(*data)
+                elif action == 'update-check': self.check_updates(manual=True)
+                elif action == 'update-install': self.install_update()
+                elif action == 'update-progress': self.update_progress_changed(data)
+                elif action == 'update-status': self.update_status(data)
+                elif action == 'update-install-now': self.close(); return
                 elif action == 'quit': self.close(); return
         except queue.Empty: pass
         self.root.after(50, self.poll)
@@ -234,7 +273,9 @@ class App:
         self.agent_note.grid(row=1, sticky='w', pady=(8, 0))
         self.agent_status = ttk.Label(box, text='', wraplength=440, justify='left')
         self.agent_status.grid(row=2, sticky='w', pady=(4, 0))
-        frame = ttk.Frame(outer); frame.grid(row=1, columnspan=2, sticky='ew'); fields = {}
+        updates = ttk.LabelFrame(outer, text='Actualizaciones', padding=10); updates.grid(row=1, columnspan=2, sticky='ew', pady=(0, 14))
+        self.update_box = ttk.Frame(updates); self.update_box.grid(sticky='ew')
+        frame = ttk.Frame(outer); frame.grid(row=2, columnspan=2, sticky='ew'); fields = {}
         options = [('Motor', 'engine', ['edge', 'piper', 'windows']), ('Voz Edge', 'voice', list(VOICES)), ('Lectura', 'mode', ['full', 'short', 'notice']), ('Posición', 'position', ['top', 'bottom', 'center', 'corner']), ('Color del halo', 'theme', list(THEME_TITLES.values()))]
         theme = self.settings.get('theme', 'prisma')
         for row, (label, key, values) in enumerate(options):
@@ -253,8 +294,8 @@ class App:
             self.overlay.set_theme(self.settings['theme']); self.overlay.set_position(self.settings['position'])
             self.dialog.destroy()
         ttk.Button(frame, text='Guardar', command=save).grid(row=9, columnspan=2, pady=(12,0))
-        ttk.Label(outer, text=f'Prisma {VERSION}', foreground='#777').grid(row=2, columnspan=2, pady=(10, 0))
-        self.refresh_agents()
+        ttk.Label(outer, text=f'Prisma {VERSION} (build {BUILD})', foreground='#777').grid(row=3, columnspan=2, pady=(10, 0))
+        self.refresh_agents(); self.refresh_updates()
     def refresh_agents(self):
         if not (hasattr(self, 'agent_rows') and self.agent_rows.winfo_exists()): return
         for child in self.agent_rows.winfo_children(): child.destroy()
@@ -307,6 +348,141 @@ class App:
         self.agent_overrides = {key: value for key, value in getattr(self, 'agent_overrides', {}).items() if key != kind}
         self.agent_warnings = ([f'No se pudo configurar {agents.TITLES[kind]}: {error}'] if error else list(warnings))
         self.refresh_agents()
+    def auto_update_check(self):
+        self.check_updates(manual=False)
+        self.root.after(6 * 60 * 60 * 1000, self.auto_update_check)
+    def check_updates(self, manual=False):
+        if self.updating or (self.update_thread and self.update_thread.is_alive()): return
+        if not INSTALLED:
+            if manual:
+                self.update_state = 'failed'
+                self.update_detail = 'Las actualizaciones solo funcionan en la app instalada.'
+                self.refresh_updates(); self.refresh_tray_menu()
+            return
+        if manual:
+            self.update_state = 'checking'; self.update_detail = ''
+            self.refresh_updates(); self.refresh_tray_menu()
+        def worker():
+            try:
+                manifest = updater.check(BUILD)
+            except Exception as error:
+                logging.exception('No se pudo comprobar la actualización')
+                detail = str(error) if isinstance(error, updater.UpdateError) else f'No se pudo comprobar si hay versiones nuevas: {error}'
+                self.events.put(('update-status', {'state': 'failed', 'detail': detail, 'manifest': None, 'manual': manual}))
+                return
+            if manifest:
+                payload = {'state': 'available', 'detail': '', 'manifest': manifest, 'manual': manual}
+            elif manual:
+                payload = {'state': 'uptodate', 'detail': '', 'manifest': None, 'manual': manual}
+            else:
+                payload = {'state': 'idle', 'detail': '', 'manifest': None, 'manual': manual}
+            self.events.put(('update-status', payload))
+        self.update_thread = threading.Thread(target=worker, daemon=True); self.update_thread.start()
+    def update_progress_changed(self, percent):
+        if self.update_state != 'downloading': return
+        self.update_progress = max(0, min(100, int(percent)))
+        self.refresh_updates()
+    def update_status(self, data):
+        state = data.get('state', 'idle'); manifest = data.get('manifest'); detail = data.get('detail', '')
+        manual = bool(data.get('manual')); previous = self.update_state
+        # A check finishing late must not overwrite download progress.
+        if previous in ('downloading', 'installing') and state not in ('failed', 'installing'): return
+        if state == 'failed' and not manual and previous in ('idle', 'available', 'uptodate'):
+            self.update_thread = None
+            logging.info('Comprobación de actualización fallida: %s', detail)
+            return
+        self.update_thread = None
+        self.update_state = state
+        self.update_manifest = manifest if state in ('available', 'downloading', 'installing', 'failed') else None
+        self.update_detail = detail
+        if state != 'downloading': self.update_progress = 0
+        if state == 'failed': self.updating = False
+        self.refresh_updates(); self.refresh_tray_menu()
+        if state == 'available' and manifest:
+            if self.update_notified != manifest.build:
+                self.update_notified = manifest.build
+                self.notify(f'Versión {manifest.version} disponible', 'Abre Ajustes para actualizar Prisma.')
+        elif state == 'uptodate':
+            self.notify('Prisma está al día', f'Tienes la versión {VERSION}.')
+        elif state == 'failed' and manual:
+            self.notify('No se completó la actualización', detail or 'Inténtalo de nuevo desde Ajustes.')
+    def install_update(self):
+        manifest = self.update_manifest
+        if manifest is None:
+            self.check_updates(manual=True); return
+        if self.updating: return
+        if not INSTALLED:
+            self.update_state = 'failed'; self.update_detail = 'Las actualizaciones solo funcionan en la app instalada.'
+            self.refresh_updates(); self.refresh_tray_menu(); return
+        if self.speech.thread and self.speech.thread.is_alive():
+            self.update_state = 'failed'; self.update_detail = 'Espera a que Prisma termine de hablar.'
+            self.refresh_updates(); self.refresh_tray_menu(); return
+        self.updating = True
+        self.update_state = 'downloading'; self.update_detail = ''; self.update_progress = 0
+        self.refresh_updates(); self.refresh_tray_menu()
+        def worker():
+            workspace = Path(tempfile.mkdtemp(prefix='prisma-update-'))
+            package = workspace / 'actualizacion.zip'
+            last = [-1]
+            def progress(fraction):
+                percent = int(round(fraction * 100))
+                if percent != last[0]:
+                    last[0] = percent
+                    self.events.put(('update-progress', percent))
+            try:
+                updater.download(manifest, package, progress=progress)
+                staged = updater.prepare(package, manifest, workspace)
+                updater.launch_helper(staged, SUPPORT, os.getpid(), workspace)
+            except Exception as error:
+                logging.exception('No se pudo preparar la actualización')
+                shutil.rmtree(workspace, ignore_errors=True)
+                detail = str(error) if isinstance(error, updater.UpdateError) else f'No se pudo actualizar: {error}'
+                self.events.put(('update-status', {'state': 'failed', 'detail': detail, 'manifest': manifest, 'manual': True}))
+                return
+            self.events.put(('update-status', {'state': 'installing', 'detail': '', 'manifest': manifest, 'manual': True}))
+            self.events.put(('update-install-now', None))
+        self.update_thread = threading.Thread(target=worker, daemon=True); self.update_thread.start()
+    def refresh_updates(self):
+        try:
+            if not self.update_box.winfo_exists(): return
+        except (AttributeError, tk.TclError):
+            return
+        for child in self.update_box.winfo_children(): child.destroy()
+        box = self.update_box; state = self.update_state; manifest = self.update_manifest
+        ttk.Label(box, text=f'Prisma {VERSION} (build {BUILD})', font=('Segoe UI', 10, 'bold')).grid(row=0, column=0, sticky='w')
+        if state == 'checking':
+            text = 'Buscando actualizaciones…'
+        elif state == 'uptodate':
+            text = 'Prisma está al día.'
+        elif state == 'available' and manifest:
+            text = f'Versión {manifest.version} disponible.'
+            if manifest.notes.strip(): text += '\n\n' + manifest.notes.strip()[:1500]
+        elif state == 'downloading' and manifest:
+            text = f'Descargando la versión {manifest.version}… {self.update_progress} %'
+        elif state == 'installing' and manifest:
+            text = f'Instalando la versión {manifest.version}. Prisma se reiniciará en unos segundos.'
+        elif state == 'failed':
+            text = self.update_detail or 'No se completó la actualización.'
+        else:
+            text = 'Comprueba si hay una versión nueva firmada.'
+        ttk.Label(box, text=text, wraplength=460, justify='left', foreground='#555').grid(row=1, column=0, sticky='w', pady=(6, 8))
+        actions = ttk.Frame(box); actions.grid(row=2, column=0, sticky='w')
+        busy = state in ('checking', 'downloading', 'installing') or self.updating
+        check = ttk.Button(actions, text='Buscar actualizaciones', command=lambda: self.check_updates(manual=True))
+        check.grid(row=0, column=0, padx=(0, 6)); check.state(['disabled'] if busy else ['!disabled'])
+        column = 1
+        if state == 'available' and manifest:
+            update = ttk.Button(actions, text=f'Actualizar a la versión {manifest.version}', command=self.install_update)
+            update.grid(row=0, column=column, padx=(0, 6)); update.state(['disabled'] if busy else ['!disabled'])
+            column += 1
+        elif state == 'failed' and manifest:
+            retry = ttk.Button(actions, text='Reintentar', command=self.install_update)
+            retry.grid(row=0, column=column, padx=(0, 6)); retry.state(['disabled'] if self.updating else ['!disabled'])
+            column += 1
+        if state in ('available', 'failed'):
+            ttk.Button(actions, text='Descargar de GitHub', command=lambda: webbrowser.open(RELEASES)).grid(row=0, column=column)
+        if not INSTALLED:
+            ttk.Label(box, text='Las actualizaciones solo funcionan en la app instalada.', foreground='#777').grid(row=3, column=0, sticky='w', pady=(6, 0))
     def close(self):
         self.speech.stop(); self.overlay.stop(); self.server.shutdown(); self.server.server_close(); self.icon.stop()
         try:

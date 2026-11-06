@@ -1,4 +1,4 @@
-Prisma para Windows 1.0.2
+Prisma para Windows 1.0.3
 =========================
 
 Prisma lee en voz alta las respuestas de Codex, Claude Code y OpenCode, y
@@ -32,6 +32,24 @@ Instalación desde este ZIP
 
 El instalador guarda la app, el entorno, la voz, los ajustes y los registros
 en %LOCALAPPDATA%\Prisma. No necesita permisos de administrador.
+
+Actualizaciones
+---------------
+
+Desde la versión 1.0.3, Prisma busca actualizaciones al abrirse y cada seis
+horas. La versión publicada se anuncia en "Ajustes → Actualizaciones" y en
+el menú de la bandeja. Antes de instalar nada se comprueban la firma digital,
+el tamaño y el hash del archivo. La actualización reemplaza el código y el
+plugin, conserva tus ajustes, el entorno y la voz, y vuelve a abrir Prisma.
+
+Si tienes 1.0.2 o anterior, esta es la primera versión con actualizador:
+cierra Prisma y ejecuta una vez el instalador nuevo. A partir de 1.0.3 las
+siguientes versiones se instalan desde Ajustes.
+
+También puedes usar "Buscar actualizaciones" en Ajustes o en la bandeja. Si
+falla la comprobación, revisa la conexión o el proxy. Si el aviso dice que
+la firma no es válida, no instales esa versión y descarga el ZIP desde
+GitHub Releases.
 
 Conectar los agentes
 --------------------
@@ -75,7 +93,8 @@ la carpeta Prisma:
 
 En Ajustes puedes cambiar el motor, la voz de Edge, el modo de lectura, la
 velocidad, el color del halo, la posición del orbe, la visibilidad y la
-atenuación del audio de fondo.
+atenuación del audio de fondo. La sección "Actualizaciones" comprueba si hay
+una versión nueva firmada.
 
 Problemas frecuentes
 --------------------
@@ -90,6 +109,9 @@ Problemas frecuentes
   Piper necesita el modelo .onnx y su archivo .onnx.json.
 - No se restauró el volumen de otra app: revísalo en el mezclador de
   Windows o desactiva la atenuación en Ajustes.
+- No se pudo comprobar la actualización: revisa la conexión, el proxy o el
+  firewall y vuelve a intentarlo desde Ajustes. La firma no válida nunca se
+  instala; en ese caso descarga el ZIP desde GitHub Releases.
 - El instalador no encuentra Python o Tkinter: instala Python 3.11 o 3.12
   de 64 bits con Tkinter y comprueba que "py -3 -m tkinter" abre una
   ventana.

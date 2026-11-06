@@ -111,3 +111,6 @@ Check `/health` on the port in `runtime.json`, toggle and adjust **Ajustes → A
 | 2026-11-04 | One signing key per app, stored in the login keychain | Sharing IconicOS Studio's key would let a leak affect both apps |
 | 2026-11-04 | Disable the updater in the development copy next to `Package.swift` | A local build must not replace itself or depend on a release bucket |
 | 2026-11-04 | The first updater version is installed by hand | Earlier versions do not contain the updater |
+| 2026-11-05 | Windows update checks use `windows-latest.json`, separate from macOS `latest.json` | The two apps have independent build numbers and packages, and neither should announce the other |
+| 2026-11-05 | Windows verifies the Ed25519 signature in pure Python | It avoids a compiled crypto dependency and keeps the check available even if a package install fails |
+| 2026-11-05 | Windows applies updates with a helper that waits for the app to exit | Windows cannot replace modules a running process has open; settings, the venv and the voice model stay in place |

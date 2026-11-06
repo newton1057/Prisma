@@ -97,7 +97,15 @@ This creates the DMG for GitHub and the signed ZIP for the bucket. The signing k
 
 ### Windows
 
-Download `Prisma-Windows-1.0.2.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm; choose **More info → Run anyway**. The installer needs no administrator rights.
+Download `Prisma-Windows-1.0.3.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm; choose **More info → Run anyway**. The installer needs no administrator rights.
+
+Starting with 1.0.3, Prisma checks a signed manifest at launch and every six hours and updates itself from **Ajustes → Actualizaciones**. Versions 1.0.2 and earlier must install 1.0.3 by hand once. To publish a Windows version, bump `VERSION` and `BUILD` in `windows/common.py`, commit and push, then run:
+
+```bash
+./tools/publicar-windows.sh "What changed in this version"
+```
+
+This signs the ZIP with the same key as macOS, publishes the GitHub release without taking the Latest slot, uploads the package to the bucket, and writes `windows-latest.json` last.
 
 Alternatively, clone the repository and run the installer in PowerShell:
 
