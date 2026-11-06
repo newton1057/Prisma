@@ -12,7 +12,8 @@ Technical reference: [Orb animation and session orbs](orb-and-sessions.md)
 - **Windows 1.0.1 released.** Tag `windows-v1.0.1` points at `fc9b9c1`; `Prisma-Windows-1.0.1.zip` is published in [Releases](https://github.com/newton1057/Prisma/releases/tag/windows-v1.0.1) (SHA-256 `3a3aa86a1e2f4fba2856a5cca00540adaab35e9d41158cc4a8967ce0ac7d3a0f`). It is intentionally **not** marked Latest so the macOS DMG stays Latest. The ZIP adds the Windows **Ajustes → Agentes** section and a portable plugin copy; it still needs end-to-end validation on a real Windows machine.
 - **Windows 1.0.2 released (orb).** Tag `windows-v1.0.2`; `Prisma-Windows-1.0.2.zip` is in [Releases](https://github.com/newton1057/Prisma/releases/tag/windows-v1.0.2) (SHA-256 `a87c19fe61a458aee702e255a8d6f32c62134741df5361190d812a283d92e1a0`), also not marked Latest. This replaces the Tk circles and the grey square with the macOS-style orb on a layered window, adds the ten halo palettes and **Ajustes → Color del halo**.
 - **Windows 1.0.3 released (updater).** Tag `windows-v1.0.3`; `Prisma-Windows-1.0.3.zip` is in [Releases](https://github.com/newton1057/Prisma/releases/tag/windows-v1.0.3) (SHA-256 `ded494d327d287d87e9aca33b84bc55d002a36ddd5e3b6f943bf057a3dbfd85a`). It is marked Latest because it is the most recently published release; GitHub keeps only one, so macOS `v1.0.2` lost that badge. This is the first Windows version with the signed bucket updater: it checks `windows-latest.json` at launch and every six hours, verifies the Ed25519 signature and the ZIP size/SHA-256, validates the version and build, and replaces the runtime after the app exits. Settings, the virtual environment and the voice model are preserved; a failed requirement install restores the previous runtime. **Ajustes → Actualizaciones** and the tray menu expose the check and the available version. 1.0.2 and earlier must install 1.0.3 by hand once. Published with `tools/publicar-windows.sh`.
-- **Installed and running (1.0.2).** `~/Applications/Prisma.app` is the 1.0.2 build on this Mac. It checked the real bucket after launch and logged `al día; publicada 1.0.2`.
+- **v1.0.4 released (unified).** Tag `v1.0.4`; one GitHub release carries `Prisma-1.0.4.dmg` for macOS and `Prisma-Windows-1.0.4.zip` for Windows (DMG SHA-256 `6a0b4ebdda8cda31419d70625a4da7c5720f3b82f2ae26141330a2bf625f1d04`; Windows ZIP SHA-256 `eec50145eccf0a35423493245908521b52500ddc51a8e706e5e32c5a2488febe`), marked Latest. Both apps share version 1.0.4 and build 4, and the bucket serves `latest.json` and `windows-latest.json` at build 4 (macOS bucket ZIP `f152ec8e94fe51dbf97bb85ab65d1caee8bde23013d41c7c889b6f2a907cfde7`). macOS 1.0.2 and Windows 1.0.3 update through the bucket; Windows 1.0.2 and earlier install by hand once. Published with the new shared `tools/publicar.sh`.
+- **Installed and running (1.0.2).** `~/Applications/Prisma.app` is the 1.0.2 build on this Mac. It checked the real bucket after launch and logged `al día; publicada 1.0.2`. It can update itself to 1.0.4 when it checks again.
 - **Tests pass:** Swift (motion, themes, activity scale, window detection, Codex monitor, agent connections, update manifest signature and SHA-256), Python (hooks; Windows app, orb renderer, layer packing, agent connections and signed updates, 48 tests), Node (OpenCode flow). Commands are in [section 8.1](orb-and-sessions.md#81-automated-tests) of the reference.
 
 ## 2. What was done
@@ -122,6 +123,14 @@ Technical reference: [Orb animation and session orbs](orb-and-sessions.md)
 7. **First updater version.** 1.0.2 and earlier cannot update themselves: install 1.0.3 by hand once, and later builds update in place. The real Windows install/replace/reopen path still needs a Windows machine.
 8. **Published and verified.** The bucket serves `windows-latest.json` with build 3 and a valid signature (checked both with the app's verifier and `UpdateSigner verificar`); the public ZIP size and SHA-256 match the manifest; and it contains `updater.py`, `update_helper.py` and `VERSION = '1.0.3'` / `BUILD = 3`. The Windows release was later marked Latest at the user's request, so the badge follows the most recently published release instead of staying with macOS; macOS `latest.json` remains at build 2. Remaining: the real replace/reopen test on Windows, with 1.0.3 installed by hand and a later build published.
 
+### Unified release session (2026-11-05)
+
+1. **Why.** The user asked for one release per version carrying both platforms, so the download page, the version number and the publishing flow stop being per-platform.
+2. **Versioning.** macOS `CFBundleShortVersionString` / `CFBundleVersion` in `app/Info.plist` and Windows `VERSION` / `BUILD` in `windows/common.py` are now 1.0.4 / 4 on both sides. macOS skips 1.0.3 on purpose; the updaters compare builds (2 and 3 to 4), so every installed app receives it.
+3. **Shared publisher.** `tools/publicar.sh` builds `app/empaquetar.sh` and `tools/package-windows.sh`, runs `app/verificar_paquete.py`, signs `latest.json` and `windows-latest.json`, creates one GitHub release with the DMG and the Windows ZIP marked Latest, uploads both packages and then both manifests, and verifies the published copies. It refuses to run when the versions or builds differ, the branch is dirty or unpushed, or the build is not greater than both published manifests. `app/publicar.sh` and `tools/publicar-windows.sh` were removed.
+4. **Verified.** Independent checks: the app's pure-Python verifier accepts both manifests, sizes and SHA-256 match (`f152ec8e…` for the macOS ZIP, `eec50145…` for the Windows ZIP), the GitHub asset digest for the Windows ZIP equals the bucket hash, the macOS ZIP carries 1.0.4 / build 4 and `com.newton.prisma`, the Windows ZIP carries `VERSION = '1.0.4'` / `BUILD = 4` plus the updater files, and `v1.0.4` is the repository's Latest with both assets.
+5. **Pending.** The real Windows install/replace/reopen path still needs a Windows machine; the macOS 1.0.2 installed here can exercise the 1.0.2 → 1.0.4 update on its next check.
+
 ## 3. Resume work
 
 ```bash
@@ -144,7 +153,13 @@ open ~/Applications/Prisma.app
 
 Session orbs reappear within 2 s: Codex `resume` clients and every Claude Code and OpenCode window are detected by process. After changing `plugin/`, rebuild the app and press **Reconectar** in **Ajustes → Agentes** (or run `./install.sh`); Claude Code runs its hooks from the plugin cache.
 
-To rebuild the Windows release ZIP:
+To publish one release for macOS and Windows (same version and build in `app/Info.plist` and `windows/common.py`):
+
+```bash
+./tools/publicar.sh "What changed in this version"
+```
+
+To rebuild only the Windows release ZIP:
 
 ```bash
 ./tools/package-windows.sh   # dist/Prisma-Windows-<version>.zip
