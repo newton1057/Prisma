@@ -10,6 +10,8 @@ from unittest.mock import patch
 import urllib.error
 import urllib.request
 
+from PIL import Image, ImageChops, ImageStat
+
 _support_dir = tempfile.TemporaryDirectory()
 os.environ['LOCALAPPDATA'] = _support_dir.name
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'windows'))
@@ -17,6 +19,8 @@ import agents
 import common
 import hook
 import install
+import orb
+import overlay
 import app
 
 
@@ -200,7 +204,7 @@ class AgentTests(unittest.TestCase):
             agents.ensure_support()
         finally:
             self.ensure.start()
-        for name in ('app.py', 'common.py', 'hook.py', 'agents.py'):
+        for name in ('app.py', 'common.py', 'hook.py', 'agents.py', 'orb.py', 'overlay.py'):
             self.assertTrue((self.support / name).exists(), name)
         self.assertTrue((self.support / 'plugin-dist' / 'plugin' / 'AGENTS.md').exists())
 
@@ -286,6 +290,100 @@ class AgentUiTests(unittest.TestCase):
         self.assertEqual(instance.agent_overrides, {'claude': ('working', 'Conectando…')})
         self.assertEqual(instance.agent_warnings, ['aviso'])
         refresh.assert_called_once()
+
+
+class OrbTests(unittest.TestCase):
+    def test_every_palette_has_a_title_and_default_is_prisma(self):
+        self.assertEqual(set(orb.THEME_TITLES), set(orb.PALETTES))
+        self.assertEqual(len(orb.PALETTES), 10)
+        self.assertEqual(app.DEFAULTS['theme'], 'prisma')
+        self.assertEqual(set(app.THEME_KEYS), set(orb.THEME_TITLES.values()))
+
+    def test_idle_frame_has_transparent_corners_and_a_visible_body(self):
+        image = orb.frame_image(orb.OrbFrame(0.0, voice=0, idle=1, idle_phase=2.37))
+        self.assertEqual(image.size, (orb.CANVAS, orb.CANVAS))
+        self.assertEqual(image.mode, 'RGBA')
+        self.assertEqual(image.getpixel((0, 0))[3], 0)
+        self.assertGreater(image.getpixel((orb.CANVAS // 2, orb.CANVAS // 2))[3], 200)
+
+    def test_voice_frame_keeps_transparent_corners(self):
+        image = orb.frame_image(orb.OrbFrame(0.0, voice=1, idle=0, speaking=1))
+        alpha = image.getchannel('A')
+        far = orb.CANVAS - 1
+        for corner in ((0, 0), (far, 0), (0, far), (far, far)):
+            self.assertEqual(alpha.getpixel(corner), 0, corner)
+        self.assertGreater(alpha.getpixel((orb.CANVAS // 2, orb.CANVAS // 2)), 200)
+
+    def test_layer_handoffs_do_not_pop(self):
+        # The moving light swaps paths near voice 0.06, the voice glass fades
+        # in at 0.001 and the idle glow fades out at 1.0. Each pair straddles
+        # one of those handoffs, so a hard switch would show a large jump.
+        pairs = [
+            (0.0005, 0.002),
+            (orb.LIGHT_CROSSFADE - 0.002, orb.LIGHT_CROSSFADE + 0.002),
+            (0.998, 1.0),
+        ]
+        for before, after in pairs:
+            images = [
+                orb.frame_image(orb.OrbFrame(1.0, voice=voice, idle=1 - voice))
+                for voice in (before, after)
+            ]
+            jump = sum(ImageStat.Stat(ImageChops.difference(*images)).mean)
+            self.assertLess(jump, 6.0, (before, after, jump))
+
+    def test_animator_eases_between_idle_and_voice(self):
+        animator = orb.OrbAnimator('aurora')
+        now = 0.0
+        animator.frame(now)
+        idle = animator.frame(now)
+        self.assertLess(idle.voice, 0.1)
+        animator.set_speaking(True)
+        for _ in range(12):
+            now += 1 / 30
+            voice = animator.frame(now)
+        self.assertGreater(voice.voice, 0.2)
+        self.assertLess(voice.voice, 0.4)
+        for _ in range(30):
+            now += 1 / 30
+            voice = animator.frame(now)
+        self.assertGreater(voice.voice, 0.95)
+        self.assertAlmostEqual(voice.idle, 1 - voice.voice)
+        self.assertEqual(voice.theme, 'aurora')
+        animator.set_speaking(False)
+        for _ in range(60):
+            now += 1 / 30
+            resting = animator.frame(now)
+        self.assertLess(resting.voice, 0.05)
+
+
+class OverlayTests(unittest.TestCase):
+    def test_placement_matches_the_tk_overlay(self):
+        self.assertEqual(overlay.placement('top', 1920, 1080), (870, 25))
+        self.assertEqual(overlay.placement('bottom', 1920, 1080), (870, 860))
+        self.assertEqual(overlay.placement('center', 1920, 1080), (870, 450))
+        self.assertEqual(overlay.placement('corner', 1920, 1080), (1720, 860))
+        self.assertEqual(overlay.placement('top', 100, 100), (0, 25))
+        self.assertEqual(overlay.placement('bottom', 100, 100), (0, 0))
+
+    def test_premultiplied_bgra(self):
+        image = Image.new('RGBA', (1, 1), (200, 100, 50, 128))
+        self.assertEqual(overlay.premultiplied_bgra(image), b'\x19\x32\x64\x80')
+
+    def test_scaled_keeps_the_canvas_and_fades_alpha(self):
+        image = Image.new('RGBA', (10, 10), (255, 255, 255, 200))
+        smaller = overlay.scaled(image, 0.5)
+        self.assertEqual(smaller.size, image.size)
+        self.assertEqual(smaller.getpixel((0, 0))[3], 0)
+        self.assertGreater(smaller.getpixel((5, 5))[3], 0)
+        faded = overlay.with_alpha(image, 0.5)
+        self.assertEqual(faded.getpixel((0, 0))[3], 100)
+
+    def test_overlay_is_a_noop_off_windows(self):
+        widget = overlay.OrbOverlay('missing-theme', 'top')
+        self.assertEqual(widget.theme, 'prisma')
+        if os.name != 'nt':
+            widget.start(); widget.show(); widget.set_theme('solar'); widget.hide(immediate=True); widget.stop()
+            self.assertIsNone(widget._worker)
 
 
 if __name__ == '__main__': unittest.main()

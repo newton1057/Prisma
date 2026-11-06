@@ -10,19 +10,21 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 import tkinter as tk
 from tkinter import ttk
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import agents
 from common import SUPPORT, RUNTIME, VERSION, runtime, speech_text
+from orb import THEME_TITLES
+from overlay import OrbOverlay
 
 SUPPORT.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(filename=SUPPORT / 'prisma.log', level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 SETTINGS_PATH = SUPPORT / 'settings.json'
 VOICES = {'ava': 'en-US-AvaMultilingualNeural', 'andrew': 'en-US-AndrewMultilingualNeural', 'emma': 'en-US-EmmaMultilingualNeural', 'brian': 'en-US-BrianMultilingualNeural', 'dalia': 'es-MX-DaliaNeural', 'jorge': 'es-MX-JorgeNeural', 'salome': 'es-CO-SalomeNeural', 'ximena': 'es-ES-XimenaNeural', 'alvaro': 'es-ES-AlvaroNeural', 'elena': 'es-AR-ElenaNeural'}
-DEFAULTS = {'engine': 'edge', 'voice': 'ava', 'mode': 'full', 'speed': 1.0, 'position': 'top', 'stayVisible': True, 'duckAudio': True, 'duckLevel': .35}
+DEFAULTS = {'engine': 'edge', 'voice': 'ava', 'mode': 'full', 'speed': 1.0, 'position': 'top', 'theme': 'prisma', 'stayVisible': True, 'duckAudio': True, 'duckLevel': .35}
+THEME_KEYS = {title: key for key, title in THEME_TITLES.items()}
 MODEL = SUPPORT / 'voices' / 'es_MX-claude-high.onnx'
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 
@@ -182,9 +184,9 @@ class App:
         self.root = tk.Tk(); self.root.withdraw()
         self.events = queue.Queue(); self.settings = load_settings(); self.speech = Speech(self.events)
         self.agent_busy = None; self.agent_overrides = {}; self.agent_warnings = []
-        self.overlay = tk.Toplevel(self.root); self.overlay.withdraw(); self.overlay.overrideredirect(True); self.overlay.attributes('-topmost', True)
-        self.overlay.configure(bg='#010101'); self.overlay.attributes('-transparentcolor', '#010101')
-        self.canvas = tk.Canvas(self.overlay, width=180, height=180, bg='#010101', highlightthickness=0); self.canvas.pack()
+        self.overlay = OrbOverlay(self.settings.get('theme', 'prisma'), self.settings['position'])
+        try: self.overlay.start()
+        except Exception: logging.exception('No se pudo iniciar el orbe')
         self.server = None
         import secrets
         token = secrets.token_urlsafe(32)
@@ -195,7 +197,7 @@ class App:
         self.server.token = token; self.server.events = self.events
         RUNTIME.write_text(json.dumps({'port': port, 'token': token, 'pid': os.getpid()}), encoding='utf-8')
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.tray(); self.root.after(50, self.poll); self.root.after(60, self.animate)
+        self.tray(); self.root.after(50, self.poll)
     def tray(self):
         import pystray
         from PIL import Image, ImageDraw
@@ -209,34 +211,19 @@ class App:
             while True:
                 action, data = self.events.get_nowait()
                 if action == 'speak': self.speech.speak(data, self.settings)
-                elif action == 'stop': self.speech.stop(); self.overlay.withdraw()
+                elif action == 'stop': self.speech.stop(); self.overlay.hide(immediate=True)
                 elif action == 'show' and data == self.speech.serial: self.show_overlay()
-                elif action == 'hide' and data == self.speech.serial: self.root.after(1200 if self.settings['stayVisible'] else 200, lambda s=data: self.overlay.withdraw() if s == self.speech.serial else None)
+                elif action == 'hide' and data == self.speech.serial: self.root.after(1200 if self.settings['stayVisible'] else 200, lambda s=data: self.hide_overlay() if s == self.speech.serial else None)
                 elif action == 'settings': self.show_settings()
                 elif action == 'agent-done': self.agent_finished(*data)
                 elif action == 'quit': self.close(); return
         except queue.Empty: pass
         self.root.after(50, self.poll)
     def show_overlay(self):
-        w = self.root.winfo_screenwidth(); h = self.root.winfo_screenheight(); pos = self.settings['position']
-        x, y = (w-180)//2, 25
-        if pos == 'bottom': y = h-220
-        elif pos == 'center': y = (h-180)//2
-        elif pos == 'corner': x, y = w-200, h-220
-        self.overlay.geometry(f'180x180+{max(0,x)}+{max(0,y)}'); self.overlay.deiconify()
-        self.overlay.update_idletasks()
-        try:
-            hwnd = ctypes.windll.user32.GetParent(self.overlay.winfo_id())
-            style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
-            ctypes.windll.user32.SetWindowLongW(hwnd, -20, style | 0x20 | 0x80 | 0x08000000)
-        except Exception: logging.exception('No se pudo configurar la ventana flotante')
-    def animate(self):
-        import math
-        self.canvas.delete('all'); t = time.monotonic(); pulse = 3 * math.sin(t * 5)
-        for i, color in enumerate(('#25334e', '#423f94', '#5b68d2', '#6fc4e4', '#c5e9ed')):
-            r = 70 - i * 10 + pulse
-            self.canvas.create_oval(90-r, 90-r, 90+r, 90+r, fill=color, outline='')
-        self.root.after(60, self.animate)
+        self.overlay.show(speaking=True)
+    def hide_overlay(self):
+        self.overlay.set_speaking(False)
+        self.overlay.hide()
     def show_settings(self):
         if hasattr(self, 'dialog') and self.dialog.winfo_exists(): self.dialog.lift(); return
         self.dialog = tk.Toplevel(self.root); self.dialog.title('Prisma — Ajustes'); self.dialog.resizable(False, False)
@@ -248,18 +235,24 @@ class App:
         self.agent_status = ttk.Label(box, text='', wraplength=440, justify='left')
         self.agent_status.grid(row=2, sticky='w', pady=(4, 0))
         frame = ttk.Frame(outer); frame.grid(row=1, columnspan=2, sticky='ew'); fields = {}
-        options = [('Motor', 'engine', ['edge', 'piper', 'windows']), ('Voz Edge', 'voice', list(VOICES)), ('Lectura', 'mode', ['full', 'short', 'notice']), ('Posición', 'position', ['top', 'bottom', 'center', 'corner'])]
+        options = [('Motor', 'engine', ['edge', 'piper', 'windows']), ('Voz Edge', 'voice', list(VOICES)), ('Lectura', 'mode', ['full', 'short', 'notice']), ('Posición', 'position', ['top', 'bottom', 'center', 'corner']), ('Color del halo', 'theme', list(THEME_TITLES.values()))]
+        theme = self.settings.get('theme', 'prisma')
         for row, (label, key, values) in enumerate(options):
             ttk.Label(frame, text=label).grid(row=row, column=0, sticky='w', pady=4)
-            fields[key] = tk.StringVar(value=self.settings[key]); ttk.Combobox(frame, textvariable=fields[key], values=values, state='readonly', width=25).grid(row=row, column=1)
-        for row, (label, key, start, end) in enumerate([('Velocidad', 'speed', .8, 1.2), ('Nivel audio de fondo', 'duckLevel', 0, 1)], 4):
+            current = THEME_TITLES.get(theme, THEME_TITLES['prisma']) if key == 'theme' else self.settings[key]
+            fields[key] = tk.StringVar(value=current); ttk.Combobox(frame, textvariable=fields[key], values=values, state='readonly', width=25).grid(row=row, column=1)
+        for row, (label, key, start, end) in enumerate([('Velocidad', 'speed', .8, 1.2), ('Nivel audio de fondo', 'duckLevel', 0, 1)], 5):
             ttk.Label(frame, text=label).grid(row=row, column=0, sticky='w', pady=4)
             fields[key] = tk.DoubleVar(value=self.settings[key]); ttk.Scale(frame, from_=start, to=end, variable=fields[key]).grid(row=row, column=1, sticky='ew')
-        for row, (label, key) in enumerate([('Atenuar otras aplicaciones', 'duckAudio'), ('Mantener visible al terminar', 'stayVisible')], 6):
+        for row, (label, key) in enumerate([('Atenuar otras aplicaciones', 'duckAudio'), ('Mantener visible al terminar', 'stayVisible')], 7):
             fields[key] = tk.BooleanVar(value=self.settings[key]); ttk.Checkbutton(frame, text=label, variable=fields[key]).grid(row=row, columnspan=2, sticky='w', pady=4)
         def save():
-            self.settings.update({key: value.get() for key, value in fields.items()}); SETTINGS_PATH.write_text(json.dumps(self.settings, indent=2), encoding='utf-8'); self.dialog.destroy()
-        ttk.Button(frame, text='Guardar', command=save).grid(row=8, columnspan=2, pady=(12,0))
+            values = {key: value.get() for key, value in fields.items()}
+            values['theme'] = THEME_KEYS.get(values['theme'], 'prisma')
+            self.settings.update(values); SETTINGS_PATH.write_text(json.dumps(self.settings, indent=2), encoding='utf-8')
+            self.overlay.set_theme(self.settings['theme']); self.overlay.set_position(self.settings['position'])
+            self.dialog.destroy()
+        ttk.Button(frame, text='Guardar', command=save).grid(row=9, columnspan=2, pady=(12,0))
         ttk.Label(outer, text=f'Prisma {VERSION}', foreground='#777').grid(row=2, columnspan=2, pady=(10, 0))
         self.refresh_agents()
     def refresh_agents(self):
@@ -315,7 +308,7 @@ class App:
         self.agent_warnings = ([f'No se pudo configurar {agents.TITLES[kind]}: {error}'] if error else list(warnings))
         self.refresh_agents()
     def close(self):
-        self.speech.stop(); self.server.shutdown(); self.server.server_close(); self.icon.stop()
+        self.speech.stop(); self.overlay.stop(); self.server.shutdown(); self.server.server_close(); self.icon.stop()
         try:
             if json.loads(RUNTIME.read_text(encoding='utf-8')).get('pid') == os.getpid(): RUNTIME.unlink()
         except (OSError, ValueError): pass

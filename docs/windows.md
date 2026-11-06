@@ -12,7 +12,7 @@ This implementation adds a Windows system tray app using Prisma's local protocol
 
 ## Install and update
 
-Download `Prisma-Windows-1.0.1.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm because the script is not signed; choose **More info → Run anyway**. The installer does not need administrator rights.
+Download `Prisma-Windows-1.0.2.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm because the script is not signed; choose **More info → Run anyway**. The installer does not need administrator rights.
 
 To install from the repository instead, open PowerShell in the repository and run:
 
@@ -60,9 +60,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\test.ps1 -Engine p
 powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\test.ps1 -Engine windows
 ```
 
-The current interface uses Spanish labels. In **Ajustes**, change the engine, Edge voice, reading mode, speed, orb position, visibility, and ducking. The `windows` engine uses a voice installed on the system; its language depends on Windows settings and installed voices. Edge defaults to Ava and supports `andrew`, `emma`, `brian`, `dalia`, `jorge`, `salome`, `ximena`, `alvaro`, and `elena`. If Edge fails, Prisma tries Piper and then the Windows voice; if Piper fails, it tries the Windows voice. The Piper model is a Spanish-language voice.
+The current interface uses Spanish labels. In **Ajustes**, change the engine, Edge voice, reading mode, speed, halo colour, orb position, visibility, and ducking. The `windows` engine uses a voice installed on the system; its language depends on Windows settings and installed voices. Edge defaults to Ava and supports `andrew`, `emma`, `brian`, `dalia`, `jorge`, `salome`, `ximena`, `alvaro`, and `elena`. If Edge fails, Prisma tries Piper and then the Windows voice; if Piper fails, it tries the Windows voice. The Piper model is a Spanish-language voice.
 
-The orb pulses during playback, appears on the primary display, and attempts to let clicks pass through. Its animation does not measure actual audio amplitude. Windows ducking lowers existing audio sessions from other apps on the default device and attempts to restore their levels afterward; if a user changes a level during the notification, Prisma respects that change. Sessions started after the notification begins are not included, and ducking does not move when the output device changes. A forced exit can prevent restoration; use the Windows volume mixer to adjust levels manually if needed.
+## The orb
+
+The orb is a Pillow port of the macOS `PrismaBeam` and `SiriLiquidGlassOrbView` layers: curved light beam, conic palette, bloom, spectrum and core, smoked glass, lower voice glass, rim, sheen, halo and ambient glow. It is drawn on a 220×220 transparent canvas with a 198 px orb and shown at 180×180. macOS uses a native backdrop blur behind the glass; on Windows the glass is simulated with gradients and a dark translucent body, so the interior reads similar but not identical.
+
+- **Waiting:** a folded loop of light that drifts around the glass.
+- **Thinking:** the loop tightens and ripples.
+- **Speaking:** the light opens into an arc above a lit lower hemisphere with bright refractions along the bottom. The animation does not measure the microphone; the arc follows a synthetic meter.
+- **Colour:** ten halo palettes from the macOS app. Choose one in **Ajustes → Color del halo**; `Prisma Original (Ámbar y Zafiro)` is the default and matches macOS.
+
+The overlay is a layered Win32 window with per-pixel transparency, painted from its own thread at up to 30 fps. The glass edge and halo blend with whatever is behind them, clicks pass through, and the window stays out of the taskbar and Alt-Tab. A frame costs about 15 ms, so keep the app on a machine that can spare one core. Transitions use the macOS timing: 1.05 s to the voice pose and 1.4 s back, with the light crossfading between the two shapes so nothing jumps when speech starts or stops.
+
+The orb appears on the primary display. Windows ducking lowers existing audio sessions from other apps on the default device and attempts to restore their levels afterward; if a user changes a level during the notification, Prisma respects that change. Sessions started after the notification begins are not included, and ducking does not move when the output device changes. A forced exit can prevent restoration; use the Windows volume mixer to adjust levels manually if needed.
 
 ## Privacy and security
 
@@ -80,4 +91,4 @@ The server listens only on `127.0.0.1`, chooses a port from 8787 through 8798, a
 
 ## Validation
 
-Run the portable tests with `python -m unittest discover -s tests -v`. They cover text extraction, questions, hook configuration, the agent connection merge/removal and idempotency, OpenCode files, missing CLIs, the Codex trust protocol with a fake app server, and the local protocol. On a Windows machine, the remaining checks include a clean installation from the ZIP; all three agent integrations and their questions; token authentication and alternate ports; playback and cancellation for all three engines; the tray and orb; and mixer restoration after manual changes and exits.
+Run the portable tests with `python -m unittest discover -s tests -v`. They cover text extraction, questions, hook configuration, the agent connection merge/removal and idempotency, OpenCode files, missing CLIs, the Codex trust protocol with a fake app server, orb rendering and transitions, layered-window packing, and the local protocol. To look at the renderer without the app, run `py -3 -m orb <folder>` from the `windows` folder; it writes one PNG per state. On a Windows machine, the remaining checks include a clean installation from the ZIP; all three agent integrations and their questions; token authentication and alternate ports; playback and cancellation for all three engines; the tray, the orb at every halo colour, its placement and click-through; and mixer restoration after manual changes and exits.

@@ -97,7 +97,7 @@ This creates the DMG for GitHub and the signed ZIP for the bucket. The signing k
 
 ### Windows
 
-Download `Prisma-Windows-1.0.1.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm; choose **More info → Run anyway**. The installer needs no administrator rights.
+Download `Prisma-Windows-1.0.2.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm; choose **More info → Run anyway**. The installer needs no administrator rights.
 
 Alternatively, clone the repository and run the installer in PowerShell:
 

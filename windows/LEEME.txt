@@ -1,4 +1,4 @@
-Prisma para Windows 1.0.1
+Prisma para Windows 1.0.2
 =========================
 
 Prisma lee en voz alta las respuestas de Codex, Claude Code y OpenCode, y
@@ -74,8 +74,8 @@ la carpeta Prisma:
   powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\test.ps1 -Engine windows
 
 En Ajustes puedes cambiar el motor, la voz de Edge, el modo de lectura, la
-velocidad, la posición del orbe, la visibilidad y la atenuación del audio de
-fondo.
+velocidad, el color del halo, la posición del orbe, la visibilidad y la
+atenuación del audio de fondo.
 
 Problemas frecuentes
 --------------------

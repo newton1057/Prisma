@@ -59,7 +59,7 @@ def ensure_support():
     """Copy the runtime files the hooks need, so they do not depend on the repository."""
     SUPPORT.mkdir(parents=True, exist_ok=True)
     source_dir = Path(__file__).resolve().parent
-    for name in ('app.py', 'common.py', 'hook.py', 'agents.py'):
+    for name in ('app.py', 'common.py', 'hook.py', 'agents.py', 'orb.py', 'overlay.py'):
         source = source_dir / name
         target = SUPPORT / name
         if os.path.normcase(os.path.realpath(source)) != os.path.normcase(os.path.realpath(target)):
