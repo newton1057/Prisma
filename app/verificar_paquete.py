@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Impide publicar en el bucket público un paquete con credenciales o configuración local."""
+"""Blocks publishing a package with credentials or local configuration to the public bucket."""
 
 import os
 import re
@@ -17,7 +17,7 @@ NOMBRES_PROHIBIDOS = ("config.json", "runtime.json", "credencial", ".env", "id_r
 
 
 def secreto_de_prueba() -> bytes:
-    """Una cadena que nunca aparece; vacía haría que todo coincidiera."""
+    """A string that never appears; empty would make everything match."""
     return os.environ.get("PRISMA_SECRETO_VERIFICACION", "\0prisma-no-tiene-secreto\0").encode()
 
 

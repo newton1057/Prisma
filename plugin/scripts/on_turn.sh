@@ -1,7 +1,7 @@
 #!/bin/bash
-# Señales de sesión, inicio de turno e interrupción de los agentes.
-# Uso: on_turn.sh [codex|claude-code|opencode|muse|antigravity] [evento]
-# Los hooks de Antigravity no traen hook_event_name ni source: van en los argumentos.
+# Session signals, turn start and interruptions for every agent.
+# Usage: on_turn.sh [codex|claude-code|opencode|muse|antigravity] [event]
+# Antigravity hooks carry no hook_event_name or source: both come as arguments.
 set -uo pipefail
 INPUT="$(cat)"
 SUPPORT="$HOME/Library/Application Support/Prisma"

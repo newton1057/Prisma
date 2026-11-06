@@ -2,14 +2,14 @@ import AppKit
 import SwiftUI
 import UpdateCore
 
-/// Trabajo de la app que no debe interrumpirse con una actualización.
+/// App work that must not be interrupted by an update.
 @MainActor
 enum AppActivity {
     static var running = false
     static var updating = false
 }
 
-/// Detecta versiones nuevas en el bucket, las verifica y reemplaza la app instalada.
+/// Detects new versions in the bucket, verifies them and replaces the installed app.
 @MainActor
 final class Updater: ObservableObject {
     enum State: Equatable {
@@ -32,7 +32,7 @@ final class Updater: ObservableObject {
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
     private let build = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0
     private let installed: URL
-    /// Solo la app empaquetada se actualiza: la copia de desarrollo vive junto a Package.swift.
+    /// Only the packaged app updates: the development copy lives next to Package.swift.
     private let enabled: Bool
     private let channel: URL
     private let log: URL
@@ -54,7 +54,7 @@ final class Updater: ObservableObject {
         log = AppPaths.log
 
         let configuration = URLSessionConfiguration.ephemeral
-        // Un manifiesto en caché ocultaría las versiones nuevas.
+        // A cached manifest would hide new versions.
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 30
@@ -62,7 +62,7 @@ final class Updater: ObservableObject {
         session = URLSession(configuration: configuration)
     }
 
-    /// Revisa al abrir y cada seis horas, porque la app puede quedarse abierta varios días.
+    /// Checks at launch and every six hours, because the app can stay open for days.
     func watch() async {
         guard enabled, !watching else { return }
         watching = true
@@ -183,7 +183,7 @@ final class Updater: ObservableObject {
         state = .downloading(manifest, fraction)
     }
 
-    /// Nada llega a reemplazar la app sin coincidir con lo que firmó quien publica.
+    /// Nothing replaces the app without matching what the publisher signed.
     private nonisolated static func prepare(_ package: URL, _ manifest: UpdateManifest, in workspace: URL) throws -> URL {
         let size = try package.resourceValues(forKeys: [.fileSizeKey]).fileSize
         guard size == manifest.size, try sha256Hex(of: package) == manifest.sha256 else {
@@ -197,7 +197,7 @@ final class Updater: ObservableObject {
             throw Problem("el paquete descargado no es la versión anunciada.")
         }
         try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", updated.path], "la versión nueva no pasó la comprobación de código.")
-        // Ya está verificada con nuestra firma: macOS no debe pedir aprobarla otra vez.
+        // Already verified with our signature: macOS must not ask to approve it again.
         try? run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", updated.path], "")
         return updated
     }
@@ -224,8 +224,8 @@ final class Updater: ObservableObject {
         try process.run()
     }
 
-    /// La app no puede reemplazarse mientras corre: este script espera a que cierre y la reabre.
-    /// Comprueba que reabrió porque `open` puede terminar bien sin haberla lanzado.
+    /// The app cannot be replaced while it runs: this script waits for it to close and reopens it.
+    /// Checks that it reopened because `open` can exit fine without launching it.
     private nonisolated static let installer = #"""
     #!/bin/sh
     pid=$1 app=$2 nueva=$3 zona=$4 registro=$5
@@ -254,7 +254,7 @@ final class Updater: ObservableObject {
     rm -rf "$zona"
     """#
 
-    /// Mismo formato y hora local que escribe el motor en este registro.
+    /// Same format and local time the engine writes in this log.
     private static let logStamp: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -276,7 +276,7 @@ final class Updater: ObservableObject {
     }
 }
 
-/// Aviso dentro de Ajustes. Solo aparece cuando hay algo que decir.
+/// Notice inside Ajustes. It only appears when there is something to say.
 struct UpdateBanner: View {
     @ObservedObject var updater: Updater
     let busy: Bool

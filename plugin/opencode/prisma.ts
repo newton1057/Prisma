@@ -31,12 +31,12 @@ Reglas del bloque:
 - Si no hay nada relevante que decir, escribe una frase corta como "Listo, terminé."`
 
 /**
- * Extrae el contenido del último bloque `<ForPrisma>...</ForPrisma>` (o `<ForPrima>`) real.
+ * Extracts the content of the last real `<ForPrisma>...</ForPrisma>` (or `<ForPrima>`) block.
  *
- * 1. Elimina antes bloques de código (``` / ~~~) y código en línea (`...`) para no
- *    confundir menciones explicativas de la etiqueta con el bloque final de voz.
- * 2. Usa un prefijo voraz `[\s\S]*` para posicionarse siempre en la última etiqueta
- *    de apertura del mensaje hasta su cierre `</ForPrisma>`.
+ * 1. It first removes code blocks (``` / ~~~) and inline code (`...`) so that
+ *    explanatory mentions of the tag are not confused with the final voice block.
+ * 2. A greedy `[\s\S]*` prefix positions it on the last opening tag of the
+ *    message through its closing `</ForPrisma>`.
  */
 const LAST_TAG_RE =
   /[\s\S]*<\s*ForPri(?:s)?ma\s*>([\s\S]*?)(?:<\s*\/\s*ForPri(?:s)?ma\s*>|$)/i
@@ -68,25 +68,25 @@ function extractMarkdownSection(text: string): string {
 function cleanForSpeech(input: string): string {
   let text = input.replace(/\r\n/g, "\n").trim()
 
-  // Bloques de código fuera: no se leen.
+  // Code blocks out: they are not read.
   text = text.replace(/```[\s\S]*?```/g, " ")
   text = text.replace(/~~~[\s\S]*?~~~/g, " ")
 
-  // Enlaces e imágenes de Markdown: conservar solo la etiqueta.
+  // Markdown links and images: keep only the label.
   text = text.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
   text = text.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
 
-  // URLs sueltas.
+  // Bare URLs.
   text = text.replace(/<?https?:\/\/[^\s)>]+>?/gi, " ")
   text = text.replace(/\bwww\.[^\s)>]+/gi, " ")
 
-  // Rutas absolutas comunes en macOS.
+  // Common absolute paths on macOS.
   text = text.replace(
     /(?:^|\s)(?:~\/|\/(?:Users|Applications|Library|System|private|tmp|var)\/)[^\s,;)]*/g,
     " ",
   )
 
-  // Markdown residual.
+  // Leftover Markdown.
   text = text.replace(/`([^`]*)`/g, "$1")
   text = text.replace(/^\s{0,3}#{1,6}\s+/gm, "")
   text = text.replace(/^\s{0,3}>\s?/gm, "")
@@ -97,7 +97,7 @@ function cleanForSpeech(input: string): string {
   text = text.replace(/~~(.*?)~~/g, "$1")
   text = text.replace(/<\/?\s*ForPri(?:s)?ma\s*>/gi, " ")
 
-  // Espacios.
+  // Whitespace.
   text = text.replace(/[ \t]+/g, " ")
   text = text.replace(/\n{3,}/g, "\n\n")
   return text.trim()
@@ -110,8 +110,8 @@ function toSpeechText(message: string): string {
   const markdown = extractMarkdownSection(message)
   if (markdown) return cleanForSpeech(markdown)
 
-  // Compatibilidad: si el modelo no incluyó el bloque, se lee el mensaje
-  // completo pero sin URLs, rutas ni markdown.
+  // Compatibility: when the model did not include the block, the whole message
+  // is read, but without URLs, paths or Markdown.
   return cleanForSpeech(message)
 }
 
@@ -325,7 +325,7 @@ export default {
       })
     }
 
-    // Pide al modelo que cierre cada respuesta y cada pregunta con un bloque pensado para voz.
+    // Ask the model to close every reply and every question with a voice-oriented block.
     if (typeof ctx.session?.hook === "function") {
       await ctx.session.hook("context", async (event: any) => {
         try {
@@ -343,12 +343,12 @@ export default {
 
           system.push({ type: "text", text: FOR_PRISMA_INSTRUCTION })
         } catch {
-          // Si falla la inyección, el turno continúa normalmente.
+          // If the injection fails, the turn goes on normally.
         }
       })
     }
 
-    // Hook directo cuando el asistente invoca la herramienta `question`
+    // Direct hook when the assistant invokes the `question` tool
     if (typeof ctx.tool?.hook === "function") {
       await ctx.tool
         .hook("execute.before", async (event: any) => {
@@ -365,7 +365,7 @@ export default {
               thinkingSessions.delete(sessionID)
             }
           } catch {
-            // Ignorar errores para no bloquear la herramienta
+            // Ignore errors so the tool is never blocked
           }
         })
         .catch(() => undefined)

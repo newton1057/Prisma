@@ -1,5 +1,5 @@
 #!/bin/bash
-# Crea el paquete que se actualiza solo (zip) y el DMG de respaldo manual.
+# Builds the self-updating package (zip) and the manual-fallback DMG.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

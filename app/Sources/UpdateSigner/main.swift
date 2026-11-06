@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 import UpdateCore
 
-// Administra la clave privada de actualizaciones y firma cada versión. Nunca la imprime.
+// Manages the update signing key and signs every version. It never prints the private key.
 
 private let service = "Prisma actualizaciones"
 private let account = "ed25519"
@@ -12,7 +12,7 @@ private func fail(_ text: String) -> Never {
     exit(1)
 }
 
-/// `security` no cambia entre compilaciones, así que el llavero no vuelve a pedir permiso.
+/// `security` does not change between builds, so the keychain does not ask for permission again.
 @discardableResult
 private func security(_ arguments: [String], input: String? = nil) -> (status: Int32, output: String) {
     let process = Process()
@@ -60,7 +60,7 @@ do {
     case ("generar", 1):
         guard storedKey() == nil else { fail("Ya existe una clave de firma; reemplazarla dejaría sin actualizaciones a las apps instaladas.") }
         let key = Curve25519.Signing.PrivateKey()
-        // Entra por stdin para que el secreto no aparezca en la lista de procesos.
+        // Enters through stdin so the secret never appears in the process list.
         let secret = key.rawRepresentation.base64EncodedString()
         security(["-i"], input: "add-generic-password -a \(account) -s \"\(service)\" -T /usr/bin/security -w \(secret)\n")
         guard storedKey() != nil else { fail("No se pudo guardar la clave en el llavero.") }

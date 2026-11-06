@@ -27,12 +27,12 @@ win_build=$(sed -n 's/^BUILD = \([0-9][0-9]*\)$/\1/p' windows/common.py)
 [ "$build" = "$win_build" ] || error "Builds distintos: macOS $build, Windows $win_build. Iguales para publicar una sola release."
 rama=$(git branch --show-current)
 
-# Lo publicado debe corresponder a un commit que ya esté en GitHub.
+# What is published must match a commit already pushed to GitHub.
 [ -z "$(git status --porcelain)" ] || error 'Hay cambios sin commit.'
 git fetch --quiet origin "$rama"
 [ "$(git rev-parse HEAD)" = "$(git rev-parse "origin/$rama")" ] || error "Sube primero la rama $rama a GitHub."
 
-# Las apps solo instalan builds mayores: repetir uno no llegaría a nadie.
+# The apps only install greater builds: repeating one would never reach anyone.
 mac_publicado=$(curl -fsS "$publico/latest.json" 2>/dev/null | python3 -c 'import json, sys; print(json.load(sys.stdin)["build"])' 2>/dev/null || echo 0)
 win_publicado=$(curl -fsS "$publico/windows-latest.json" 2>/dev/null | python3 -c 'import json, sys; print(json.load(sys.stdin)["build"])' 2>/dev/null || echo 0)
 [ "$build" -gt "$mac_publicado" ] || error "Sube CFBundleVersion en Info.plist: el build $mac_publicado ya está publicado."
@@ -86,7 +86,7 @@ gcloud storage cp "$manifiesto_mac" "gs://$bucket/latest.json" --project="$proye
 gcloud storage cp "$manifiesto_win" "gs://$bucket/windows-latest.json" --project="$proyecto" \
     --cache-control=no-store --content-type=application/json
 
-# Comprueba lo mismo que verá una app sin sesión.
+# Check the same thing a signed-out app will see.
 curl -fsS -o "$firmado_mac" "$publico/latest.json"
 curl -fsS -o "$firmado_win" "$publico/windows-latest.json"
 "$firmador" verificar "$firmado_mac" "$mac_zip"

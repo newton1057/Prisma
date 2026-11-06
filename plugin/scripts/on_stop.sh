@@ -1,6 +1,6 @@
 #!/bin/bash
-# Prisma: hook Stop compatible con Codex, Claude Code, OpenCode, Muse Code y Antigravity.
-# Uso: on_stop.sh [codex|claude-code|opencode|muse|antigravity] [evento]
+# Prisma Stop hook compatible with Codex, Claude Code, OpenCode, Muse Code and Antigravity.
+# Usage: on_stop.sh [codex|claude-code|opencode|muse|antigravity] [event]
 set -uo pipefail
 
 INPUT="$(cat)"
@@ -34,7 +34,7 @@ if [ "$EVENT" != "Stop" ] && [ "$EVENT" != "PreToolUse" ] && [ "$EVENT" != "Perm
   exit 0
 fi
 
-# Antigravity deniega una herramienta cuando el hook no responde con una decisión.
+# Antigravity denies a tool when the hook does not answer with a decision.
 respond() {
   if [ "$SOURCE_HINT" = "antigravity" ] && [ "$EVENT" = "PreToolUse" ]; then
     echo '{"decision":"allow"}'
@@ -43,8 +43,8 @@ respond() {
   fi
 }
 
-# 1. Intentar leer last_assistant_message directo (Codex, OpenCode, Muse Code y
-#    versiones nuevas de Claude Code)
+# 1. Try last_assistant_message directly (Codex, OpenCode, Muse Code and new
+#    Claude Code versions)
 MESSAGE="$(printf '%s' "$INPUT" | jq -r '.last_assistant_message // empty' 2>/dev/null)"
 SOURCE="$SOURCE_HINT"
 [ -n "$SOURCE" ] || SOURCE="$(printf '%s' "$INPUT" | jq -r '.source // empty' 2>/dev/null)"
@@ -69,17 +69,17 @@ if [ -z "$SOURCE" ] && [ -z "$(printf '%s' "$INPUT" | jq -r '.source // empty' 2
   SOURCE="$(detect_source_from_transcript "$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)")"
 fi
 
-# Devuelve el bloque <ForPrisma> del mensaje de asistente inmediatamente anterior
-# a una pregunta o solicitud de permiso (sin llamadas a herramientas de por medio)
-# únicamente si formula una pregunta (contiene ? o ¿). Así evitamos leer mensajes
-# de estado (<ForPrisma> en commentary de Codex) que no corresponden a la pregunta.
+# Returns the <ForPrisma> block of the assistant message immediately before a
+# question or permission request (with no tool calls in between), and only when
+# it asks a question (it contains ? or ¿). This avoids reading status messages
+# (<ForPrisma> in Codex commentary) that do not belong to the question.
 recent_question_forprisma_text() {
   local path="$1"
   [ -f "$path" ] || return 0
 
   local text=""
   if head -n 5 "$path" 2>/dev/null | grep -q '"type":"session_meta"'; then
-    # Codex: solo tomar el último response_item relevante si es un mensaje de assistant
+    # Codex: only take the last relevant response_item when it is an assistant message
     text="$(tail -n 60 "$path" 2>/dev/null | jq -rs '
       [ .[]
         | select(.type == "response_item")
@@ -94,7 +94,7 @@ recent_question_forprisma_text() {
         end
     ' 2>/dev/null || true)"
   else
-    # Claude Code: última línea de assistant si no hubo tool_result después
+    # Claude Code: last assistant line when no tool_result came after it
     text="$(tail -n 25 "$path" 2>/dev/null | jq -rs '
       [ .[] | select(.type == "assistant" or .type == "user" or (.message.role? != null)) ]
       | last
@@ -146,7 +146,7 @@ extract_questions_from_tool_input() {
   ' 2>/dev/null || true
 }
 
-# 1b. Si es PreToolUse de una herramienta de preguntas
+# 1b. PreToolUse of a question tool
 if [ "$EVENT" = "PreToolUse" ] && [ "$SOURCE" != "antigravity" ]; then
   TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)"
   case "$TOOL_NAME" in
@@ -178,7 +178,7 @@ if [ "$EVENT" = "PreToolUse" ] && [ "$SOURCE" != "antigravity" ]; then
   esac
 fi
 
-# 1c. Si es PermissionRequest (Codex, Claude Code o Muse Code pide confirmación/permiso al usuario)
+# 1c. PermissionRequest (Codex, Claude Code or Muse Code asks the user for confirmation/permission)
 if [ "$EVENT" = "PermissionRequest" ]; then
   TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)"
   TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)"
@@ -235,9 +235,9 @@ if [ "$EVENT" = "PermissionRequest" ]; then
   fi
 fi
 
-# 1d. Antigravity: el payload usa camelCase y no trae hook_event_name ni
-#     last_assistant_message; Stop se lee del transcript y PreToolUse de la
-#     llamada a ask_question / ask_permission.
+# 1d. Antigravity: the payload is camelCase and carries no hook_event_name or
+#     last_assistant_message; Stop reads the transcript and PreToolUse reads
+#     the ask_question / ask_permission call.
 if [ "$SOURCE" = "antigravity" ]; then
   if [ "$EVENT" = "PreToolUse" ]; then
     MESSAGE="$(printf '%s' "$INPUT" | jq -r '
@@ -285,7 +285,7 @@ if [ "$SOURCE" = "antigravity" ]; then
   fi
 fi
 
-# 2. Si viene vacío en Stop, extraer el último mensaje de assistant desde transcript_path (Claude Code o Codex JSONL)
+# 2. When Stop arrives empty, extract the last assistant message from transcript_path (Claude Code or Codex JSONL)
 if [ -z "$MESSAGE" ] || [ "$MESSAGE" = "null" ]; then
   TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)"
   if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
@@ -330,8 +330,8 @@ if [ -z "$MESSAGE" ] || [ "$MESSAGE" = "null" ]; then
   exit 0
 fi
 
-# 3. Si la respuesta incluye un bloque <ForPrisma>...</ForPrisma> (o <ForPrima> / "For Prisma:"),
-#    extraer solo ese bloque y limpiarlo de URLs, rutas y Markdown para voz.
+# 3. When the reply includes a <ForPrisma>...</ForPrisma> block (or <ForPrima> / "For Prisma:"),
+#    extract only that block and clean it of URLs, paths and Markdown for voice.
 EXTRACTED_FOR_PRISMA="$(printf '%s' "$MESSAGE" | perl -CS -0777 -ne '
   my $text = $_;
   $text =~ s/\r\n/\n/g;
@@ -361,7 +361,7 @@ EXTRACTED_FOR_PRISMA="$(printf '%s' "$MESSAGE" | perl -CS -0777 -ne '
 
   $chosen = $text if $chosen !~ /\S/;
 
-  # Limpieza para voz: sin bloques de código, URLs, rutas locales ni Markdown
+  # Cleanup for voice: no code blocks, URLs, local paths or Markdown
   $chosen =~ s/```[\s\S]*?```/ /g;
   $chosen =~ s/~~~[\s\S]*?~~~/ /g;
   $chosen =~ s/!\[([^\]]*)\]\([^)]*\)/$1/g;
@@ -418,8 +418,8 @@ case "$SOURCE" in
 esac
 case "$AGENT_PID" in *[!0-9]*) AGENT_PID="" ;; esac
 
-# 4. Evitar hablar dos veces el mismo texto seguido dentro de la misma sesión
-#    (por ejemplo si PreToolUse y PermissionRequest o Stop disparan sobre la misma pregunta).
+# 4. Avoid speaking the same text twice in a row within the same session
+#    (for example when PreToolUse and PermissionRequest or Stop fire over the same question).
 DEDUPE_FILE="$SUPPORT/tmp/last_spoken.json"
 mkdir -p "$SUPPORT/tmp"
 NOW_TS="$(date +%s)"

@@ -176,7 +176,7 @@ try:
 finally:
     proc.terminate()
 
-# Si el daemon compartido de Codex está activo, pedirle también que recargue la configuración en vivo
+# If Codex's shared daemon is running, also ask it to reload the configuration live
 if updates and os.path.exists(sock_path):
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(3)
