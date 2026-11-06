@@ -12,7 +12,7 @@ This implementation adds a Windows system tray app using Prisma's local protocol
 
 ## Install and update
 
-Download `Prisma-Windows-1.0.3.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm because the script is not signed; choose **More info → Run anyway**. The installer does not need administrator rights.
+Download `Prisma-Windows-1.0.4.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm because the script is not signed; choose **More info → Run anyway**. The installer does not need administrator rights. The same release also carries the macOS DMG.
 
 To install from the repository instead, open PowerShell in the repository and run:
 
@@ -36,11 +36,11 @@ To update from 1.0.2 or earlier, close Prisma from its tray icon and run the new
 
 ## Automatic updates
 
-Starting with 1.0.3, Prisma checks for updates at launch and every six hours. It reads `windows-latest.json` from the public `prisma-updates` bucket and verifies its Ed25519 signature with the same key as the macOS app. Only a manifest whose `build` is greater than the one compiled into the app is offered, in **Ajustes → Actualizaciones** and in the tray menu. The download is accepted only if its size and SHA-256 match the signed manifest and the ZIP contains the announced version and build.
+Prisma checks for updates at launch and every six hours. It reads `windows-latest.json` from the public `prisma-updates` bucket and verifies its Ed25519 signature with the same key as the macOS app. Only a manifest whose `build` is greater than the one compiled into the app is offered, in **Ajustes → Actualizaciones** and in the tray menu. The download is accepted only if its size and SHA-256 match the signed manifest and the ZIP contains the announced version and build.
 
 The update replaces the Python runtime and the staged plugin under `%LOCALAPPDATA%\Prisma`, then reopens Prisma. Settings, the virtual environment, the voice model, and logs are left untouched. If new requirements fail to install, the previous runtime is restored. Installation waits until Prisma finishes speaking; otherwise a retry button appears. A manual **Buscar actualizaciones** reports whether the app is up to date, and **Descargar de GitHub** remains available as a fallback.
 
-The bucket manifest is published by `tools/publicar-windows.sh`, which signs the ZIP, uploads the GitHub release, stores the package under `windows/versiones/<version>/`, and writes `windows-latest.json` last. GitHub marks the most recently published release as Latest, so a Windows release holds that slot until the next Windows or macOS release is published.
+Releases are published by the shared `tools/publicar.sh`: it requires the same version and build in `app/Info.plist` and `windows/common.py`, signs both ZIPs with the macOS `UpdateSigner`, creates one GitHub release with the DMG and the Windows ZIP, stores the packages under `versiones/<version>/` and `windows/versiones/<version>/`, and writes `latest.json` and `windows-latest.json` last. GitHub marks the newest release as Latest, so the badge follows whichever platform published last.
 
 ## Connect agents from Ajustes
 

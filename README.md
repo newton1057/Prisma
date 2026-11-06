@@ -87,25 +87,19 @@ Prisma checks `https://storage.googleapis.com/prisma-updates/latest.json` on lau
 
 The first version with the updater, 1.0.2, must be installed by hand: earlier versions do not know how to update themselves. Updates are only enabled for the packaged app in `Applications` or `~/Applications`, not for the development copy next to `Package.swift`.
 
-To publish a version, bump `CFBundleShortVersionString` and `CFBundleVersion` in `app/Info.plist`, commit and push, then run:
+macOS and Windows share one version and one release. To publish, set the same version and build in `CFBundleShortVersionString` / `CFBundleVersion` in `app/Info.plist` and in `VERSION` / `BUILD` in `windows/common.py`, commit and push, then run:
 
 ```bash
-./app/publicar.sh "What changed in this version"
+./tools/publicar.sh "What changed in this version"
 ```
 
-This creates the DMG for GitHub, marks that release Latest, and uploads the signed ZIP for the bucket. The signing key lives in the login keychain under **Prisma actualizaciones**. A backup copy is kept at `~/Library/Application Support/Prisma/firma-actualizaciones.txt` with permissions `600`, outside the repository and the app bundle. Restore it on another Mac with `app/.build/release/UpdateSigner restaurar <file>`; without that key no new version can be signed.
+This creates one GitHub release with the macOS DMG and the Windows ZIP, marks it Latest, and uploads both signed ZIPs and their update manifests to the bucket. The signing key lives in the login keychain under **Prisma actualizaciones**. A backup copy is kept at `~/Library/Application Support/Prisma/firma-actualizaciones.txt` with permissions `600`, outside the repository and the app bundle. Restore it on another Mac with `app/.build/release/UpdateSigner restaurar <file>`; without that key no new version can be signed.
 
 ### Windows
 
-Download `Prisma-Windows-1.0.3.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm; choose **More info → Run anyway**. The installer needs no administrator rights.
+Download `Prisma-Windows-1.0.4.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm; choose **More info → Run anyway**. The installer needs no administrator rights.
 
-Starting with 1.0.3, Prisma checks a signed manifest at launch and every six hours and updates itself from **Ajustes → Actualizaciones**. Versions 1.0.2 and earlier must install 1.0.3 by hand once. To publish a Windows version, bump `VERSION` and `BUILD` in `windows/common.py`, commit and push, then run:
-
-```bash
-./tools/publicar-windows.sh "What changed in this version"
-```
-
-This signs the ZIP with the same key as macOS, publishes the GitHub release and marks it Latest (GitHub keeps only the most recently published release there, Windows or macOS), uploads the package to the bucket, and writes `windows-latest.json` last.
+Prisma checks a signed manifest at launch and every six hours and updates itself from **Ajustes → Actualizaciones**. Versions 1.0.2 and earlier must install 1.0.4 by hand once; from that version on, updates arrive on their own. The release flow is the shared one described above, which also publishes the Windows ZIP to the bucket and writes `windows-latest.json` last.
 
 Alternatively, clone the repository and run the installer in PowerShell:
 

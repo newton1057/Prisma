@@ -1,4 +1,4 @@
-Prisma para Windows 1.0.3
+Prisma para Windows 1.0.4
 =========================
 
 Prisma lee en voz alta las respuestas de Codex, Claude Code y OpenCode, y
@@ -36,15 +36,15 @@ en %LOCALAPPDATA%\Prisma. No necesita permisos de administrador.
 Actualizaciones
 ---------------
 
-Desde la versión 1.0.3, Prisma busca actualizaciones al abrirse y cada seis
-horas. La versión publicada se anuncia en "Ajustes → Actualizaciones" y en
-el menú de la bandeja. Antes de instalar nada se comprueban la firma digital,
-el tamaño y el hash del archivo. La actualización reemplaza el código y el
-plugin, conserva tus ajustes, el entorno y la voz, y vuelve a abrir Prisma.
+Prisma busca actualizaciones al abrirse y cada seis horas. La versión
+publicada se anuncia en "Ajustes → Actualizaciones" y en el menú de la
+bandeja. Antes de instalar nada se comprueban la firma digital, el tamaño y
+el hash del archivo. La actualización reemplaza el código y el plugin,
+conserva tus ajustes, el entorno y la voz, y vuelve a abrir Prisma.
 
-Si tienes 1.0.2 o anterior, esta es la primera versión con actualizador:
-cierra Prisma y ejecuta una vez el instalador nuevo. A partir de 1.0.3 las
-siguientes versiones se instalan desde Ajustes.
+Si tienes 1.0.2 o anterior, instala esta versión una vez a mano: cierra
+Prisma y ejecuta el instalador nuevo. Los que ya tengan la 1.0.3 recibirán
+la 1.0.4 desde Ajustes, sin hacer nada.
 
 También puedes usar "Buscar actualizaciones" en Ajustes o en la bandeja. Si
 falla la comprobación, revisa la conexión o el proxy. Si el aviso dice que
