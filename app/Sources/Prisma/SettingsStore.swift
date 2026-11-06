@@ -279,11 +279,21 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(openCodeTheme.rawValue, forKey: Keys.openCodeTheme) }
     }
 
+    @Published var museTheme: HaloTheme {
+        didSet { defaults.set(museTheme.rawValue, forKey: Keys.museTheme) }
+    }
+
+    @Published var antigravityTheme: HaloTheme {
+        didSet { defaults.set(antigravityTheme.rawValue, forKey: Keys.antigravityTheme) }
+    }
+
     func theme(for source: String?) -> HaloTheme {
         switch source {
         case "codex": return codexTheme
         case "claude-code": return claudeTheme
         case "opencode": return openCodeTheme
+        case "muse": return museTheme
+        case "antigravity": return antigravityTheme
         default: return haloTheme
         }
     }
@@ -331,6 +341,8 @@ final class SettingsStore: ObservableObject {
         static let codexTheme = "codexTheme"
         static let claudeTheme = "claudeTheme"
         static let openCodeTheme = "openCodeTheme"
+        static let museTheme = "museTheme"
+        static let antigravityTheme = "antigravityTheme"
         static let showThinking = "showThinking"
         static let showHoverInfo = "showHoverInfo"
         static let stayVisible = "stayVisible"
@@ -360,6 +372,8 @@ final class SettingsStore: ObservableObject {
         codexTheme = HaloTheme(rawValue: defaults.string(forKey: Keys.codexTheme) ?? "") ?? fallbackTheme
         claudeTheme = HaloTheme(rawValue: defaults.string(forKey: Keys.claudeTheme) ?? "") ?? .solar
         openCodeTheme = HaloTheme(rawValue: defaults.string(forKey: Keys.openCodeTheme) ?? "") ?? .aurora
+        museTheme = HaloTheme(rawValue: defaults.string(forKey: Keys.museTheme) ?? "") ?? .nebula
+        antigravityTheme = HaloTheme(rawValue: defaults.string(forKey: Keys.antigravityTheme) ?? "") ?? .esmeralda
         showThinking = defaults.object(forKey: Keys.showThinking) as? Bool ?? true
         showHoverInfo = defaults.object(forKey: Keys.showHoverInfo) as? Bool ?? true
         stayVisible = defaults.object(forKey: Keys.stayVisible) as? Bool ?? true

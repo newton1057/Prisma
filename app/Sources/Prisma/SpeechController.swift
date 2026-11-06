@@ -37,6 +37,8 @@ enum TextPreparer {
             ("\\bAirPods\\b", "Érpods"),
             ("\\bCodexVoz\\b", "Códex Voz"),
             ("\\bOpenCode\\b", "Ópen Coud"),
+            ("\\bMuse\\s+Code\\b", "Mius Coud"),
+            ("\\bAntigravity\\b", "Antigráviti"),
             ("\\bOpenAI\\b", "Ópen Ei Ái"),
             ("\\bChatGPT\\b", "Chat Yi Pi Ti"),
             ("\\bGPT\\b", "Yi Pi Ti"),

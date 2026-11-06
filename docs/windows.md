@@ -1,13 +1,13 @@
 # Prisma for Windows
 
-This implementation adds a Windows system tray app using Prisma's local protocol. It includes notifications for Codex, Claude Code, and OpenCode; an animated orb; persistent settings; Edge Neural TTS; Piper; and a local Windows voice. It is separate from the macOS Swift app, and its appearance and some behavior differ. **Installation and operation still need to be validated on Windows**; automated tests run on macOS do not replace that validation.
+This implementation adds a Windows system tray app using Prisma's local protocol. It includes notifications for Codex, Claude Code, OpenCode, Muse Code, and Antigravity; an animated orb; persistent settings; Edge Neural TTS; Piper; and a local Windows voice. It is separate from the macOS Swift app, and its appearance and some behavior differ. **Installation and operation still need to be validated on Windows**; automated tests run on macOS do not replace that validation.
 
 ## Requirements
 
 - 64-bit Windows 10 or 11, an audio output device, and a graphical user session.
 - 64-bit Python 3.11 or 3.12 with Tkinter, pip, and the `py` launcher. Check with `py -3 --version` and `py -3 -m tkinter`.
 - Windows PowerShell and internet access to install packages and download the model. Edge requires internet for each synthesis; Piper and the system voice run locally.
-- Codex, Claude Code, or OpenCode installed **natively on Windows**. Claude Code may require Git Bash depending on its installation. WSL and containers have separate paths, processes, and networking; this setup does not automatically connect hooks in those environments to Windows.
+- Codex, Claude Code, OpenCode, Muse Code, or Antigravity installed **natively on Windows**. Claude Code may require Git Bash depending on its installation. WSL and containers have separate paths, processes, and networking; this setup does not automatically connect hooks in those environments to Windows.
 - If Piper or its dependencies fail to load, install the Microsoft Visual C++ Redistributable appropriate for your system.
 
 ## Install and update
@@ -28,6 +28,8 @@ The installer configures the agents it finds:
 
 - **Codex:** adds the voice instructions to `%CODEX_HOME%` (or `%USERPROFILE%\.codex`) `AGENTS.md`, merges the `Stop`, `PreToolUse`, and `PermissionRequest` hooks into `hooks.json`, and tries to mark them trusted through Codex's app-server protocol. If that fails, Codex may ask you to approve them when it opens.
 - **Claude Code:** adds the instructions to `%USERPROFILE%\.claude\CLAUDE.md` and merges the same hooks into `%USERPROFILE%\.claude\settings.json`, or the folder set by `CLAUDE_CONFIG_DIR`.
+- **Muse Code:** adds the instructions to `%USERPROFILE%\.config\muse\AGENTS.md` and merges the same hooks into `settings.json` there (with the required `schema_version`), or the folder set by `XDG_CONFIG_HOME`. Muse Code runs user hooks without a separate trust step.
+- **Antigravity:** adds the instructions to `%USERPROFILE%\.gemini\config\AGENTS.md` and writes a named `prisma` entry into `%USERPROFILE%\.gemini\config\hooks.json` that speaks the final reply (read from the session transcript), `ask_question` questions, and `ask_permission` requests. The shared file is used by the Antigravity app, CLI, and IDE.
 - **OpenCode:** copies the plugin to `plugins\prisma.ts` and the skill to `skills\prisma\SKILL.md` under `%USERPROFILE%\.config\opencode`, or the folder set by `XDG_CONFIG_HOME`, then asks the CLI to reload.
 
 Other settings are preserved, and a `.prisma-backup` copy is created before modifying each configuration file. If an existing file is not valid JSON, installation stops to avoid overwriting it. Agent commands and integration mechanisms can change between versions; if an agent is updated, reconnect it from Ajustes.
@@ -44,7 +46,7 @@ Releases are published by the shared `tools/publicar.sh`: it requires the same v
 
 ## Connect agents from Ajustes
 
-Open the tray menu and choose **Ajustes**. The **Agentes** section lists Codex, Claude Code, and OpenCode with a status dot and the action for each:
+Open the tray menu and choose **Ajustes**. The **Agentes** section lists Codex, Claude Code, OpenCode, Muse Code, and Antigravity with a status dot and the action for each:
 
 These connections cover **local sessions on this PC**. Cloud sessions, WSL, containers, and agents running on another machine do not execute the hooks or plugin installed here.
 
@@ -104,4 +106,4 @@ Updates read the manifest and download the ZIP over HTTPS from the public `prism
 
 ## Validation
 
-Run the portable tests with `python -m unittest discover -s tests -v`. They cover text extraction, questions, hook configuration, the agent connection merge/removal and idempotency, OpenCode files, missing CLIs, the Codex trust protocol with a fake app server, orb rendering and transitions, layered-window packing, the signed update manifest and tamper rejection, safe ZIP extraction, runtime replacement with rollback, and the local protocol. To look at the renderer without the app, run `py -3 -m orb <folder>` from the `windows` folder; it writes one PNG per state. On a Windows machine, the remaining checks include a clean installation from the ZIP; all three agent integrations and their questions; token authentication and alternate ports; playback and cancellation for all three engines; the tray, the orb at every halo colour, its placement and click-through; mixer restoration after manual changes and exits; and an update from one published build to the next, including the reopen and the rollback path.
+Run the portable tests with `python -m unittest discover -s tests -v`. They cover text extraction, questions, hook configuration, the agent connection merge/removal and idempotency, OpenCode files, Muse Code and Antigravity hooks and transcripts, missing CLIs, the Codex trust protocol with a fake app server, orb rendering and transitions, layered-window packing, the signed update manifest and tamper rejection, safe ZIP extraction, runtime replacement with rollback, and the local protocol. To look at the renderer without the app, run `py -3 -m orb <folder>` from the `windows` folder; it writes one PNG per state. On a Windows machine, the remaining checks include a clean installation from the ZIP; all five agent integrations and their questions; token authentication and alternate ports; playback and cancellation for all three engines; the tray, the orb at every halo colour, its placement and click-through; mixer restoration after manual changes and exits; and an update from one published build to the next, including the reopen and the rollback path.

@@ -12,9 +12,23 @@ from common import SUPPORT, VERSION
 CODEX = Path(os.environ.get('CODEX_HOME') or Path.home() / '.codex')
 CLAUDE = Path(os.environ.get('CLAUDE_CONFIG_DIR') or Path.home() / '.claude')
 OPENCODE = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'opencode'
+MUSE = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'muse'
+ANTIGRAVITY = Path.home() / '.gemini' / 'config'
 
-TITLES = {'codex': 'Codex', 'claude': 'Claude Code', 'opencode': 'OpenCode'}
-EXECUTABLES = {'codex': 'codex', 'claude': 'claude', 'opencode': 'opencode'}
+TITLES = {
+    'codex': 'Codex',
+    'claude': 'Claude Code',
+    'opencode': 'OpenCode',
+    'muse': 'Muse Code',
+    'antigravity': 'Antigravity',
+}
+EXECUTABLES = {
+    'codex': 'codex',
+    'claude': 'claude',
+    'opencode': 'opencode',
+    'muse': 'muse',
+    'antigravity': 'agy',
+}
 MATCHER = 'AskUserQuestion|request_user_input|request_user_input_async|send_user_message_async|send_message_to_user_async|question'
 EVENTS = ('Stop', 'PreToolUse', 'PermissionRequest')
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
@@ -72,10 +86,13 @@ def cli_available(kind):
     return shutil.which(EXECUTABLES[kind]) is not None
 
 
-def hook_command():
+def hook_command(*args):
     python = (SUPPORT / 'venv' / 'Scripts' / 'python.exe').as_posix()
     script = (SUPPORT / 'hook.py').as_posix()
-    return f'"{python}" "{script}"'
+    command = f'"{python}" "{script}"'
+    if args:
+        command += ' ' + ' '.join(args)
+    return command
 
 
 def read_json(path):
@@ -166,6 +183,14 @@ def remove_hooks(path):
     if not isinstance(data, dict):
         raise ValueError(f'Configuración inválida: {path}')
     backup(path)
+    remove_hooks_from(data)
+    if data:
+        write_json(path, data)
+    else:
+        path.unlink()
+
+
+def remove_hooks_from(data):
     hooks = data.get('hooks')
     if isinstance(hooks, dict):
         for event in list(hooks):
@@ -184,10 +209,6 @@ def remove_hooks(path):
                 hooks.pop(event, None)
         if not hooks:
             data.pop('hooks', None)
-    if data:
-        write_json(path, data)
-    else:
-        path.unlink()
 
 
 def instruction_installed(path):
@@ -197,7 +218,7 @@ def instruction_installed(path):
         return False
 
 
-def hooks_installed(path):
+def hooks_installed(path, events=EVENTS, command=None):
     try:
         data = read_json(path)
     except (OSError, ValueError, UnicodeError):
@@ -205,8 +226,8 @@ def hooks_installed(path):
     hooks = data.get('hooks') if isinstance(data, dict) else None
     if not isinstance(hooks, dict):
         return False
-    command = hook_command()
-    for event in EVENTS:
+    command = command or hook_command()
+    for event in events:
         found = False
         for group in hooks.get(event, []) or []:
             if not isinstance(group, dict):
@@ -220,6 +241,110 @@ def hooks_installed(path):
         if not found:
             return False
     return True
+
+
+def merge_muse_hooks(path):
+    """Merge Prisma's hooks into Muse Code's user settings.json."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {}
+    if path.exists():
+        data = read_json(path)
+        if not isinstance(data, dict):
+            raise ValueError(f'Configuración inválida: {path}')
+        backup(path)
+    if 'schema_version' not in data:
+        data['schema_version'] = 1
+    hooks = data.setdefault('hooks', {})
+    if not isinstance(hooks, dict):
+        raise ValueError(f'Configuración inválida: {path}')
+    command = hook_command('muse')
+    for event in EVENTS:
+        groups = []
+        for group in hooks.get(event, []) or []:
+            if not isinstance(group, dict):
+                continue
+            group = dict(group)
+            inner = [h for h in group.get('hooks', []) or [] if not is_prisma_hook(h)]
+            if inner:
+                group['hooks'] = inner
+                groups.append(group)
+        fresh = {'hooks': [{'type': 'command', 'command': command, 'timeout': 10, 'statusMessage': 'Prisma'}]}
+        if event == 'PreToolUse':
+            fresh['matcher'] = MATCHER
+        groups.append(fresh)
+        hooks[event] = groups
+    write_json(path, data)
+
+
+def remove_muse_hooks(path):
+    path = Path(path)
+    if not path.exists():
+        return
+    data = read_json(path)
+    if not isinstance(data, dict):
+        raise ValueError(f'Configuración inválida: {path}')
+    backup(path)
+    remove_hooks_from(data)
+    if list(data.keys()) == ['schema_version']:
+        path.unlink()
+    else:
+        write_json(path, data)
+
+
+def merge_antigravity_hooks(path):
+    """Write the "prisma" entry into Antigravity's global hooks.json."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {}
+    if path.exists():
+        data = read_json(path)
+        if not isinstance(data, dict):
+            raise ValueError(f'Configuración inválida: {path}')
+        backup(path)
+    def handler(*args, timeout):
+        return {'type': 'command', 'command': hook_command(*args), 'timeout': timeout}
+    data['prisma'] = {
+        'Stop': [handler('antigravity', 'Stop', timeout=15)],
+        'PreToolUse': [{
+            'matcher': 'ask_question|ask_permission',
+            'hooks': [handler('antigravity', 'PreToolUse', timeout=10)],
+        }],
+    }
+    write_json(path, data)
+
+
+def antigravity_hooks_installed(path):
+    try:
+        data = read_json(path)
+    except (OSError, ValueError, UnicodeError):
+        return False
+    entry = data.get('prisma') if isinstance(data, dict) else None
+    if not isinstance(entry, dict):
+        return False
+    stop = entry.get('Stop') or []
+    gate = entry.get('PreToolUse') or []
+    stop_ok = any(isinstance(hook, dict) and hook.get('command') == hook_command('antigravity', 'Stop')
+                  for hook in stop)
+    gate_ok = any(isinstance(hook, dict) and hook.get('command') == hook_command('antigravity', 'PreToolUse')
+                  for group in gate if isinstance(group, dict)
+                  for hook in group.get('hooks') or [])
+    return stop_ok and gate_ok
+
+
+def remove_antigravity_hooks(path):
+    path = Path(path)
+    if not path.exists():
+        return
+    data = read_json(path)
+    if not isinstance(data, dict):
+        raise ValueError(f'Configuración inválida: {path}')
+    backup(path)
+    data.pop('prisma', None)
+    if data:
+        write_json(path, data)
+    else:
+        path.unlink()
 
 
 def codex_hooks_trusted():
@@ -262,6 +387,26 @@ def status(kind):
         missing = ([] if installed else ['hooks']) + ([] if instructed else ['instrucciones'])
         return AgentInfo(kind, title, 'incomplete', 'Falta: ' + ', '.join(missing))
 
+    if kind == 'muse':
+        installed = hooks_installed(MUSE / 'settings.json', command=hook_command('muse'))
+        instructed = instruction_installed(MUSE / 'AGENTS.md')
+        if installed and instructed:
+            return AgentInfo(kind, title, 'connected', 'Conectado')
+        if not installed and not instructed:
+            return AgentInfo(kind, title, 'disconnected', 'No conectado')
+        missing = ([] if installed else ['hooks']) + ([] if instructed else ['instrucciones'])
+        return AgentInfo(kind, title, 'incomplete', 'Falta: ' + ', '.join(missing))
+
+    if kind == 'antigravity':
+        installed = antigravity_hooks_installed(ANTIGRAVITY / 'hooks.json')
+        instructed = instruction_installed(ANTIGRAVITY / 'AGENTS.md')
+        if installed and instructed:
+            return AgentInfo(kind, title, 'connected', 'Conectado')
+        if not installed and not instructed:
+            return AgentInfo(kind, title, 'disconnected', 'No conectado')
+        missing = ([] if installed else ['hooks']) + ([] if instructed else ['instrucciones'])
+        return AgentInfo(kind, title, 'incomplete', 'Falta: ' + ', '.join(missing))
+
     try:
         source = plugin_source()
         expected = (source / 'opencode' / 'prisma.ts').read_bytes()
@@ -288,7 +433,7 @@ def status(kind):
 
 
 def statuses():
-    return [status(kind) for kind in ('codex', 'claude', 'opencode')]
+    return [status(kind) for kind in ('codex', 'claude', 'opencode', 'muse', 'antigravity')]
 
 
 def connect(kind):
@@ -304,6 +449,14 @@ def connect(kind):
     if kind == 'claude':
         install_instruction(CLAUDE / 'CLAUDE.md')
         merge_hooks(CLAUDE / 'settings.json')
+        return []
+    if kind == 'muse':
+        install_instruction(MUSE / 'AGENTS.md')
+        merge_muse_hooks(MUSE / 'settings.json')
+        return []
+    if kind == 'antigravity':
+        install_instruction(ANTIGRAVITY / 'AGENTS.md')
+        merge_antigravity_hooks(ANTIGRAVITY / 'hooks.json')
         return []
     source = plugin_source()
     (OPENCODE / 'plugins').mkdir(parents=True, exist_ok=True)
@@ -321,6 +474,12 @@ def disconnect(kind):
     elif kind == 'claude':
         remove_hooks(CLAUDE / 'settings.json')
         remove_instruction(CLAUDE / 'CLAUDE.md')
+    elif kind == 'muse':
+        remove_muse_hooks(MUSE / 'settings.json')
+        remove_instruction(MUSE / 'AGENTS.md')
+    elif kind == 'antigravity':
+        remove_antigravity_hooks(ANTIGRAVITY / 'hooks.json')
+        remove_instruction(ANTIGRAVITY / 'AGENTS.md')
     else:
         (OPENCODE / 'plugins' / 'prisma.ts').unlink(missing_ok=True)
         (OPENCODE / 'skills' / 'prisma' / 'SKILL.md').unlink(missing_ok=True)

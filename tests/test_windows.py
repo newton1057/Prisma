@@ -45,6 +45,23 @@ class TextTests(unittest.TestCase):
             self.assertEqual(send.call_args.args[0]['text'], '¿Continuar? Opciones: Sí, No.')
             hook.main({'hook_event_name':'PreToolUse', 'tool_name':'request_user_input', 'tool_input':{'questions':[{'question':'¿Continuar?', 'options':['Sí','No']}]}})
             self.assertEqual(send.call_count, 1)
+    def test_muse_and_antigravity_payloads(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(hook, 'SUPPORT', Path(directory)), patch.object(hook, 'send') as send:
+            hook.main({'hook_event_name':'Stop', 'last_assistant_message':'<ForPrisma>Listo.</ForPrisma>',
+                       'session_id':'m1', 'cwd':'/tmp/proj'}, 'muse')
+            self.assertEqual(send.call_args.args[0], {'text':'Listo.', 'session_id':'m1', 'cwd':'/tmp/proj', 'source':'muse'})
+            payload = {'conversationId':'c1', 'workspacePaths':['/tmp/agy'],
+                       'toolCall':{'name':'ask_question','args':{'questions':[{'question':'¿Sigo?','options':['Sí','(Recommended) No']}]}}}
+            hook.main(payload, 'antigravity', 'PreToolUse')
+            self.assertEqual(send.call_args.args[0], {'text':'¿Sigo? Opciones: Sí, No.', 'session_id':'c1', 'cwd':'/tmp/agy', 'source':'antigravity'})
+    def test_antigravity_transcript(self):
+        with tempfile.TemporaryDirectory() as directory:
+            p = Path(directory) / 'transcript_full.jsonl'
+            p.write_text('\n'.join(json.dumps(line) for line in [
+                {'source':'USER_EXPLICIT','type':'USER_INPUT','content':'hola'},
+                {'source':'MODEL','type':'PLANNER_RESPONSE','content':'Listo.\n<ForPrisma>Hecho.</ForPrisma>'},
+            ]), encoding='utf-8')
+            self.assertEqual(common.speech_text(common.transcript_text(p)), 'Hecho.')
 
 
 class ServerTests(unittest.TestCase):
@@ -76,12 +93,16 @@ class AgentTests(unittest.TestCase):
         self.codex = root / 'codex'
         self.claude = root / 'claude'
         self.opencode = root / 'opencode'
+        self.muse = root / 'muse'
+        self.antigravity = root / 'antigravity'
         self.support = root / 'Prisma'
         self.ensure = patch.object(agents, 'ensure_support')
         patches = [
             patch.object(agents, 'CODEX', self.codex),
             patch.object(agents, 'CLAUDE', self.claude),
             patch.object(agents, 'OPENCODE', self.opencode),
+            patch.object(agents, 'MUSE', self.muse),
+            patch.object(agents, 'ANTIGRAVITY', self.antigravity),
             patch.object(agents, 'SUPPORT', self.support),
             self.ensure,
         ]
@@ -194,8 +215,70 @@ class AgentTests(unittest.TestCase):
         self.assertFalse(skill.exists())
         self.assertEqual(self.status('opencode').state, 'disconnected')
 
+    def test_muse_connection_is_idempotent_and_removable(self):
+        self.muse.mkdir(parents=True)
+        (self.muse / 'settings.json').write_text(json.dumps({'provider': 'meta'}), encoding='utf-8')
+        self.assertEqual(self.connect('muse'), [])
+        settings = json.loads((self.muse / 'settings.json').read_text(encoding='utf-8'))
+        self.assertEqual(settings['provider'], 'meta')
+        self.assertEqual(settings['schema_version'], 1)
+        self.assertEqual(set(settings['hooks']), set(agents.EVENTS))
+        self.assertEqual(settings['hooks']['Stop'][0]['hooks'][0]['statusMessage'], 'Prisma')
+        self.assertIn('hook.py" muse', settings['hooks']['Stop'][0]['hooks'][0]['command'])
+        self.assertIn('<ForPrisma>', (self.muse / 'AGENTS.md').read_text(encoding='utf-8'))
+        self.assertEqual(self.status('muse').state, 'connected')
+
+        self.connect('muse')
+        settings = json.loads((self.muse / 'settings.json').read_text(encoding='utf-8'))
+        for event in agents.EVENTS: self.assertEqual(len(settings['hooks'][event]), 1)
+
+        agents.disconnect('muse')
+        self.assertEqual(json.loads((self.muse / 'settings.json').read_text(encoding='utf-8')),
+                         {'provider': 'meta', 'schema_version': 1})
+        self.assertFalse((self.muse / 'AGENTS.md').exists())
+        self.assertEqual(self.status('muse').state, 'disconnected')
+
+    def test_muse_removes_a_settings_file_that_only_held_prisma(self):
+        self.connect('muse')
+        self.assertTrue((self.muse / 'settings.json').exists())
+        agents.disconnect('muse')
+        self.assertFalse((self.muse / 'settings.json').exists())
+
+    def test_antigravity_connection_and_removal(self):
+        self.antigravity.mkdir(parents=True)
+        other = {'other-linter': {'PostToolUse': [{'matcher': 'run_command', 'hooks': [{'type': 'command', 'command': './lint.sh'}]}]}}
+        (self.antigravity / 'hooks.json').write_text(json.dumps(other), encoding='utf-8')
+        (self.antigravity / 'AGENTS.md').write_text('# Mine\n', encoding='utf-8')
+        self.assertEqual(self.connect('antigravity'), [])
+        data = json.loads((self.antigravity / 'hooks.json').read_text(encoding='utf-8'))
+        self.assertIn('other-linter', data)
+        prisma = data['prisma']
+        self.assertIn('hook.py" antigravity Stop', prisma['Stop'][0]['command'])
+        self.assertEqual(prisma['PreToolUse'][0]['matcher'], 'ask_question|ask_permission')
+        self.assertIn('hook.py" antigravity PreToolUse', prisma['PreToolUse'][0]['hooks'][0]['command'])
+        instructions = (self.antigravity / 'AGENTS.md').read_text(encoding='utf-8')
+        self.assertTrue(instructions.startswith('# Mine'))
+        self.assertIn('<ForPrisma>', instructions)
+        self.assertEqual(self.status('antigravity').state, 'connected')
+
+        self.connect('antigravity')
+        data = json.loads((self.antigravity / 'hooks.json').read_text(encoding='utf-8'))
+        self.assertEqual(len(data['prisma']['Stop']), 1)
+
+        agents.disconnect('antigravity')
+        data = json.loads((self.antigravity / 'hooks.json').read_text(encoding='utf-8'))
+        self.assertEqual(set(data), {'other-linter'})
+        self.assertEqual((self.antigravity / 'AGENTS.md').read_text(encoding='utf-8'), '# Mine\n')
+        self.assertEqual(self.status('antigravity').state, 'disconnected')
+
+    def test_antigravity_removes_a_hooks_file_that_only_held_prisma(self):
+        self.connect('antigravity')
+        self.assertTrue((self.antigravity / 'hooks.json').exists())
+        agents.disconnect('antigravity')
+        self.assertFalse((self.antigravity / 'hooks.json').exists())
+
     def test_missing_cli_is_reported(self):
-        for kind in ('codex', 'claude', 'opencode'):
+        for kind in ('codex', 'claude', 'opencode', 'muse', 'antigravity'):
             info = self.status(kind, cli=False)
             self.assertEqual(info.state, 'missing')
         warnings = self.connect('codex', cli=False)
@@ -271,6 +354,13 @@ class InstallTests(unittest.TestCase):
             self.assertFalse(install.detected('claude'))
             (Path(directory) / 'claude').mkdir()
             self.assertTrue(install.detected('claude'))
+        with tempfile.TemporaryDirectory() as directory, patch.object(agents, 'cli_available', return_value=False), patch.object(agents, 'MUSE', Path(directory) / 'muse'), patch.object(agents, 'ANTIGRAVITY', Path(directory) / 'antigravity'):
+            self.assertFalse(install.detected('muse'))
+            self.assertFalse(install.detected('antigravity'))
+            (Path(directory) / 'muse').mkdir()
+            (Path(directory) / 'antigravity').mkdir()
+            self.assertTrue(install.detected('muse'))
+            self.assertTrue(install.detected('antigravity'))
 
 
 class AgentUiTests(unittest.TestCase):

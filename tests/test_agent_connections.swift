@@ -42,6 +42,8 @@ struct TestAgentConnections {
         testCodex(installer: installer, paths: paths, recorder: recorder, sourceRoot: repo)
         testClaude(installer: installer, paths: paths, recorder: recorder, repo: repo)
         testOpenCode(installer: installer, paths: paths)
+        testMuse(installer: installer, paths: paths)
+        testAntigravity(installer: installer, paths: paths)
         testMissingCLI(installer: installer)
 
         if failures > 0 {
@@ -200,6 +202,124 @@ struct TestAgentConnections {
         print("Missing CLI")
         expect(installer.status(for: .codex, cliAvailable: false).state == .agentMissing,
                "marks Codex as missing when its CLI is not installed")
+    }
+
+    // MARK: Muse Code
+
+    static func testMuse(installer: AgentInstaller, paths: AgentPaths) {
+        print("Muse Code")
+        expect(installer.status(for: .muse, cliAvailable: true).state == .disconnected,
+               "starts disconnected without hooks or rules")
+
+        _ = try? installer.install(.muse)
+        _ = try? installer.install(.muse)
+
+        var root = readJSON(paths.museSettings) ?? [:]
+        expect(root["schema_version"] as? Int == 1, "writes the required schema_version")
+        var hooks = root["hooks"] as? [String: Any] ?? [:]
+        let expected: Set<String> = [
+            "SessionStart", "UserPromptSubmit", "Interrupt", "StopFailure",
+            "SessionEnd", "Stop", "PreToolUse", "PermissionRequest"
+        ]
+        expect(Set(hooks.keys) == expected, "writes the eight Muse hook events")
+
+        let interrupt = hooks["Interrupt"] as? [[String: Any]] ?? []
+        let asyncEntry = (interrupt.first?["hooks"] as? [[String: Any]])?.first
+        expect(asyncEntry?["async"] as? Bool == true, "marks the cancellation hook async")
+        expect(prismaHookCount(interrupt) == 1, "reinstalling does not duplicate the Prisma hook")
+
+        let matcher = (hooks["PreToolUse"] as? [[String: Any]])?.first?["matcher"] as? String ?? ""
+        expect(matcher.contains("request_user_input"), "question hook keeps its matcher")
+
+        let agents = (try? String(contentsOf: paths.museAgents, encoding: .utf8)) ?? ""
+        expect(agents.contains("<ForPrisma>"), "adds the ForPrisma block to the Muse user rules")
+        expect(installer.status(for: .muse, cliAvailable: true).state == .connected,
+               "reports connected after installing")
+
+        try? installer.remove(.muse)
+        expect(!fm.fileExists(atPath: paths.museSettings.path),
+               "disconnecting removes a settings file that only held the version")
+        let agentsAfter = (try? String(contentsOf: paths.museAgents, encoding: .utf8)) ?? ""
+        expect(!agentsAfter.contains("<ForPrisma>"), "disconnecting removes the ForPrisma block")
+
+        // A settings file with unrelated content keeps it, and gets a backup.
+        writeJSON([
+            "schema_version": 1,
+            "provider": "meta",
+            "hooks": ["Stop": [["hooks": [["type": "command", "command": "echo keep-me"]]]]]
+        ], to: paths.museSettings)
+        _ = try? installer.install(.muse)
+        root = readJSON(paths.museSettings) ?? [:]
+        expect(root["provider"] as? String == "meta", "keeps unrelated settings")
+        hooks = root["hooks"] as? [String: Any] ?? [:]
+        let stop = hooks["Stop"] as? [[String: Any]] ?? []
+        expect(stop.count == 2, "keeps the unrelated Stop hook and adds exactly one Prisma hook")
+        expect(commandExists("echo keep-me", in: hooks["Stop"]), "the unrelated hook is untouched")
+        expect(fm.fileExists(atPath: paths.museSettings.appendingPathExtension("prisma-backup").path),
+               "keeps a backup of the previous settings")
+
+        try? installer.remove(.muse)
+        hooks = readJSON(paths.museSettings)?["hooks"] as? [String: Any] ?? [:]
+        expect(commandExists("echo keep-me", in: hooks["Stop"]),
+               "disconnecting keeps the unrelated hook and its settings")
+    }
+
+    // MARK: Antigravity
+
+    static func testAntigravity(installer: AgentInstaller, paths: AgentPaths) {
+        print("Antigravity")
+        expect(installer.status(for: .antigravity, cliAvailable: true).state == .disconnected,
+               "starts disconnected without hooks or rules")
+
+        writeJSON([
+            "other-linter": [
+                "PostToolUse": [[
+                    "matcher": "run_command",
+                    "hooks": [["type": "command", "command": "./lint.sh"]]
+                ]]
+            ]
+        ], to: paths.antigravityHooks)
+
+        _ = try? installer.install(.antigravity)
+        _ = try? installer.install(.antigravity)
+
+        var root = readJSON(paths.antigravityHooks) ?? [:]
+        expect(root["other-linter"] != nil, "keeps other named hooks")
+        let prisma = root["prisma"] as? [String: Any] ?? [:]
+        let stop = prisma["Stop"] as? [[String: Any]] ?? []
+        expect(stop.count == 1 && (stop.first?["command"] as? String)?.contains("on_stop.sh\" antigravity Stop") == true,
+               "writes one Antigravity Stop handler")
+        let gate = (prisma["PreToolUse"] as? [[String: Any]])?.first ?? [:]
+        expect(gate["matcher"] as? String == "ask_question|ask_permission", "question hook keeps its matcher")
+        let handlers = gate["hooks"] as? [[String: Any]] ?? []
+        expect(handlers.count == 1 &&
+               (handlers.first?["command"] as? String)?.contains("on_stop.sh\" antigravity PreToolUse") == true,
+               "the question gate answers with a decision")
+        let session = prisma["SessionStart"] as? [[String: Any]] ?? []
+        expect(session.count == 1 &&
+               (session.first?["command"] as? String)?.contains("on_turn.sh\" antigravity SessionStart") == true,
+               "writes the session start handler")
+
+        let agents = (try? String(contentsOf: paths.antigravityAgents, encoding: .utf8)) ?? ""
+        expect(agents.contains("<ForPrisma>"), "adds the ForPrisma block to the global Antigravity rules")
+        expect(installer.status(for: .antigravity, cliAvailable: true).state == .connected,
+               "reports connected after installing")
+        expect(fm.fileExists(atPath: paths.antigravityHooks.appendingPathExtension("prisma-backup").path),
+               "keeps a backup of the previous hooks")
+
+        try? installer.remove(.antigravity)
+        root = readJSON(paths.antigravityHooks) ?? [:]
+        expect(root["prisma"] == nil, "disconnecting removes only the Prisma entry")
+        expect(root["other-linter"] != nil, "disconnecting keeps other named hooks")
+        let agentsAfter = (try? String(contentsOf: paths.antigravityAgents, encoding: .utf8)) ?? ""
+        expect(!agentsAfter.contains("<ForPrisma>"), "disconnecting removes the ForPrisma block")
+
+        // Without other hooks the file goes away entirely.
+        try? fm.removeItem(at: paths.antigravityHooks)
+        _ = try? installer.install(.antigravity)
+        try? installer.remove(.antigravity)
+        expect(!fm.fileExists(atPath: paths.antigravityHooks.path),
+               "disconnecting removes a hooks file that only held Prisma")
     }
 
     // MARK: Helpers

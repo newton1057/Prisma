@@ -99,11 +99,17 @@ final class OverlayController {
                 }
                 self.reposition(animated: true)
             }
-        self.themeCancellable = Publishers.CombineLatest4(
-            settings.$haloTheme,
-            settings.$codexTheme,
-            settings.$claudeTheme,
-            settings.$openCodeTheme
+        self.themeCancellable = Publishers.CombineLatest(
+            Publishers.CombineLatest4(
+                settings.$haloTheme,
+                settings.$codexTheme,
+                settings.$claudeTheme,
+                settings.$openCodeTheme
+            ),
+            Publishers.CombineLatest(
+                settings.$museTheme,
+                settings.$antigravityTheme
+            )
         )
         .receive(on: DispatchQueue.main)
         .sink { [weak self] _ in

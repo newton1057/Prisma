@@ -302,7 +302,7 @@ class App:
         try: infos = agents.statuses()
         except Exception:
             logging.exception('No se pudieron comprobar los agentes')
-            infos = [agents.AgentInfo(key, agents.TITLES[key], 'failed', 'No se pudo comprobar') for key in ('codex', 'claude', 'opencode')]
+            infos = [agents.AgentInfo(key, agents.TITLES[key], 'failed', 'No se pudo comprobar') for key in agents.TITLES]
         colors = {'connected': '#1f9d55', 'incomplete': '#c47b00', 'disconnected': '#8a8a8a', 'missing': '#b0b0b0', 'working': '#2d7dd2', 'failed': '#c0392b'}
         overrides = getattr(self, 'agent_overrides', {})
         for row, info in enumerate(infos):

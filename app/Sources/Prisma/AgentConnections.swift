@@ -6,6 +6,8 @@ enum AgentKind: String, CaseIterable, Identifiable {
     case codex
     case claudeCode = "claude-code"
     case openCode = "opencode"
+    case muse
+    case antigravity
 
     var id: String { rawValue }
 
@@ -14,6 +16,8 @@ enum AgentKind: String, CaseIterable, Identifiable {
         case .codex: return "Codex"
         case .claudeCode: return "Claude Code"
         case .openCode: return "OpenCode"
+        case .muse: return "Muse Code"
+        case .antigravity: return "Antigravity"
         }
     }
 
@@ -22,6 +26,8 @@ enum AgentKind: String, CaseIterable, Identifiable {
         case .codex: return "codex"
         case .claudeCode: return "claude"
         case .openCode: return "opencode"
+        case .muse: return "muse"
+        case .antigravity: return "agy"
         }
     }
 }
@@ -53,6 +59,25 @@ struct AgentPaths {
     let home: URL
     let support: URL
     let codexHome: URL
+    /// `$XDG_CONFIG_HOME` when set, `~/.config` otherwise, as Muse Code reads it.
+    let configHome: URL
+
+    init(home: URL, support: URL, codexHome: URL, configHome: URL? = nil) {
+        self.home = home
+        self.support = support
+        self.codexHome = codexHome
+        if let configHome {
+            self.configHome = configHome
+        } else {
+            let custom = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let custom, !custom.isEmpty {
+                self.configHome = URL(fileURLWithPath: custom, isDirectory: true)
+            } else {
+                self.configHome = home.appendingPathComponent(".config", isDirectory: true)
+            }
+        }
+    }
 
     static func live() -> AgentPaths {
         let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
@@ -82,6 +107,15 @@ struct AgentPaths {
 
     var openCodePlugin: URL { openCodeConfig.appendingPathComponent("plugins/prisma.ts") }
     var openCodeSkill: URL { openCodeConfig.appendingPathComponent("skills/prisma/SKILL.md") }
+
+    var museConfig: URL { configHome.appendingPathComponent("muse", isDirectory: true) }
+    var museSettings: URL { museConfig.appendingPathComponent("settings.json") }
+    var museAgents: URL { museConfig.appendingPathComponent("AGENTS.md") }
+
+    /// Antigravity shares one customization directory across its surfaces.
+    var antigravityConfig: URL { home.appendingPathComponent(".gemini/config", isDirectory: true) }
+    var antigravityHooks: URL { antigravityConfig.appendingPathComponent("hooks.json") }
+    var antigravityAgents: URL { antigravityConfig.appendingPathComponent("AGENTS.md") }
 }
 
 // MARK: - Shell
@@ -175,6 +209,8 @@ struct AgentInstaller {
         let command: String
         let timeout: Int
         let matcher: String?
+        /// Muse Code only admits cancellation hooks that run detached.
+        var isAsync: Bool = false
     }
 
     let paths: AgentPaths
@@ -270,7 +306,36 @@ struct AgentInstaller {
                 return AgentConnection(kind: kind, state: .incomplete, detail: "Plugin desactualizado")
             }
             return AgentConnection(kind: kind, state: .connected, detail: "Conectado")
+
+        case .muse:
+            let hooksInstalled = museHooksInstalled()
+            let instructed = instructionInstalled(paths.museAgents)
+            if hooksInstalled && instructed {
+                return AgentConnection(kind: kind, state: .connected, detail: "Conectado")
+            }
+            if !hooksInstalled && !instructed {
+                return AgentConnection(kind: kind, state: .disconnected, detail: "No conectado")
+            }
+            let missing = (hooksInstalled ? [] : ["hooks"]) + (instructed ? [] : ["instrucciones"])
+            return AgentConnection(kind: kind, state: .incomplete, detail: "Falta: \(missing.joined(separator: ", "))")
+
+        case .antigravity:
+            let hooksInstalled = antigravityHooksInstalled()
+            let instructed = instructionInstalled(paths.antigravityAgents)
+            if hooksInstalled && instructed {
+                return AgentConnection(kind: kind, state: .connected, detail: "Conectado")
+            }
+            if !hooksInstalled && !instructed {
+                return AgentConnection(kind: kind, state: .disconnected, detail: "No conectado")
+            }
+            let missing = (hooksInstalled ? [] : ["hooks"]) + (instructed ? [] : ["instrucciones"])
+            return AgentConnection(kind: kind, state: .incomplete, detail: "Falta: \(missing.joined(separator: ", "))")
         }
+    }
+
+    func instructionInstalled(_ file: URL) -> Bool {
+        guard let contents = try? String(contentsOf: file, encoding: .utf8) else { return false }
+        return contents.contains("<ForPrisma>")
     }
 
     func codexHooksInstalled() -> Bool {
@@ -332,6 +397,8 @@ struct AgentInstaller {
         case .codex: return try installCodex()
         case .claudeCode: return try installClaude()
         case .openCode: return try installOpenCode()
+        case .muse: return try installMuse()
+        case .antigravity: return try installAntigravity()
         }
     }
 
@@ -398,6 +465,22 @@ struct AgentInstaller {
         return []
     }
 
+    /// Muse Code reads user hooks and user rules from its own config directory;
+    /// unlike project hooks, they need no workspace trust step.
+    private func installMuse() throws -> [String] {
+        try appendAgentsBlock(to: paths.museAgents, replaceShortFile: false)
+        try writeMuseHooks()
+        return []
+    }
+
+    /// Antigravity shares one hooks.json and one AGENTS.md across its app, CLI
+    /// and IDE; the "prisma" entry keeps its own events so other hooks survive.
+    private func installAntigravity() throws -> [String] {
+        try appendAgentsBlock(to: paths.antigravityAgents, replaceShortFile: false)
+        try writeAntigravityHooks()
+        return []
+    }
+
     // MARK: Remove
 
     func remove(_ kind: AgentKind) throws {
@@ -420,6 +503,14 @@ struct AgentInstaller {
             if Shell.exists("opencode") {
                 _ = try? runCommand("opencode", ["reload"])
             }
+
+        case .muse:
+            removeMuseHooks()
+            removeAgentsBlock(from: paths.museAgents)
+
+        case .antigravity:
+            removeAntigravityHooks()
+            removeAgentsBlock(from: paths.antigravityAgents)
         }
     }
 
@@ -513,6 +604,186 @@ struct AgentInstaller {
             || command.contains("Application Support/CodexVoz/")
             || status == "Prisma"
             || status == "CodexVoz"
+    }
+
+    // MARK: Muse Code
+
+    /// Muse Code accepts the same event names it documents for its hooks; the
+    /// Cancellation hook must declare `async: true` or the whole entry is skipped.
+    func museSpecs() -> [HookSpec] {
+        let turn = "bash \"\(paths.support.path)/on_turn.sh\" muse"
+        let stop = "bash \"\(paths.support.path)/on_stop.sh\" muse"
+        return [
+            HookSpec(event: "SessionStart", command: turn, timeout: 10, matcher: nil),
+            HookSpec(event: "UserPromptSubmit", command: turn, timeout: 10, matcher: nil),
+            HookSpec(event: "Interrupt", command: turn, timeout: 3, matcher: nil, isAsync: true),
+            HookSpec(event: "StopFailure", command: turn, timeout: 3, matcher: nil),
+            HookSpec(event: "SessionEnd", command: turn, timeout: 3, matcher: nil),
+            HookSpec(event: "Stop", command: stop, timeout: 10, matcher: nil),
+            HookSpec(event: "PermissionRequest", command: stop, timeout: 10, matcher: nil),
+            HookSpec(
+                event: "PreToolUse",
+                command: stop,
+                timeout: 10,
+                matcher: "request_user_input|request_user_input_async"
+            )
+        ]
+    }
+
+    func museHooksInstalled() -> Bool {
+        guard let root = readJSON(paths.museSettings),
+              let hooks = root["hooks"] as? [String: Any] else { return false }
+        return museSpecs().allSatisfy { spec in
+            guard let groups = hooks[spec.event] as? [[String: Any]] else { return false }
+            return groups.contains { group in
+                let entries = group["hooks"] as? [[String: Any]] ?? []
+                return entries.contains { ($0["command"] as? String) == spec.command }
+            }
+        }
+    }
+
+    func writeMuseHooks() throws {
+        var root = readJSON(paths.museSettings) ?? [:]
+        if root["schema_version"] == nil { root["schema_version"] = 1 }
+        try backup(paths.museSettings)
+        var hooks = root["hooks"] as? [String: Any] ?? [:]
+
+        for spec in museSpecs() {
+            var groups = hooks[spec.event] as? [[String: Any]] ?? []
+            groups = groups.compactMap { group in
+                var group = group
+                var entries = group["hooks"] as? [[String: Any]] ?? []
+                entries.removeAll { isPrismaHook($0) }
+                guard !entries.isEmpty else { return nil }
+                group["hooks"] = entries
+                return group
+            }
+
+            var entry: [String: Any] = [
+                "type": "command",
+                "command": spec.command,
+                "timeout": spec.timeout,
+                "statusMessage": "Prisma"
+            ]
+            if spec.isAsync { entry["async"] = true }
+            var group: [String: Any] = ["hooks": [entry]]
+            if let matcher = spec.matcher { group["matcher"] = matcher }
+            groups.append(group)
+            hooks[spec.event] = groups
+        }
+
+        root["hooks"] = hooks
+        try writeJSON(root, to: paths.museSettings)
+    }
+
+    func removeMuseHooks() {
+        let fm = FileManager.default
+        guard var root = readJSON(paths.museSettings),
+              var hooks = root["hooks"] as? [String: Any] else { return }
+
+        for (event, value) in hooks {
+            guard var groups = value as? [[String: Any]] else { continue }
+            groups = groups.compactMap { group in
+                var group = group
+                var entries = group["hooks"] as? [[String: Any]] ?? []
+                entries.removeAll { isPrismaHook($0) }
+                guard !entries.isEmpty else { return nil }
+                group["hooks"] = entries
+                return group
+            }
+            if groups.isEmpty {
+                hooks.removeValue(forKey: event)
+            } else {
+                hooks[event] = groups
+            }
+        }
+
+        if hooks.isEmpty {
+            root.removeValue(forKey: "hooks")
+        } else {
+            root["hooks"] = hooks
+        }
+        // A file left holding only the required version carries nothing else.
+        if root.keys.allSatisfy({ $0 == "schema_version" }) {
+            try? fm.removeItem(at: paths.museSettings)
+        } else {
+            try? writeJSON(root, to: paths.museSettings)
+        }
+    }
+
+    // MARK: Antigravity
+
+    /// Events that take plain handlers, and the tool events that take groups.
+    func antigravityStopCommand() -> String {
+        "bash \"\(paths.support.path)/on_stop.sh\" antigravity Stop"
+    }
+
+    func antigravityPreToolCommand() -> String {
+        "bash \"\(paths.support.path)/on_stop.sh\" antigravity PreToolUse"
+    }
+
+    func antigravityHooksInstalled() -> Bool {
+        guard let root = readJSON(paths.antigravityHooks),
+              let entry = root["prisma"] as? [String: Any],
+              let stop = entry["Stop"] as? [[String: Any]],
+              let gate = entry["PreToolUse"] as? [[String: Any]],
+              let session = entry["SessionStart"] as? [[String: Any]],
+              let invocation = entry["PreInvocation"] as? [[String: Any]] else { return false }
+        let stopOK = stop.contains { ($0["command"] as? String) == antigravityStopCommand() }
+        let gateOK = gate.contains { group in
+            let handlers = group["hooks"] as? [[String: Any]] ?? []
+            return handlers.contains { ($0["command"] as? String) == antigravityPreToolCommand() }
+        }
+        let sessionOK = session.contains { ($0["command"] as? String) == "bash \"\(paths.support.path)/on_turn.sh\" antigravity SessionStart" }
+        let invocationOK = invocation.contains { ($0["command"] as? String) == "bash \"\(paths.support.path)/on_turn.sh\" antigravity PreInvocation" }
+        return stopOK && gateOK && sessionOK && invocationOK
+    }
+
+    func writeAntigravityHooks() throws {
+        var root = readJSON(paths.antigravityHooks) ?? [:]
+        try backup(paths.antigravityHooks)
+
+        func handler(_ command: String, timeout: Int) -> [String: Any] {
+            ["type": "command", "command": command, "timeout": timeout]
+        }
+
+        root["prisma"] = [
+            "SessionStart": [
+                handler("bash \"\(paths.support.path)/on_turn.sh\" antigravity SessionStart", timeout: 10)
+            ],
+            "PreInvocation": [
+                handler("bash \"\(paths.support.path)/on_turn.sh\" antigravity PreInvocation", timeout: 10)
+            ],
+            "Stop": [
+                handler(antigravityStopCommand(), timeout: 15)
+            ],
+            "PreToolUse": [[
+                "matcher": "ask_question|ask_permission",
+                "hooks": [handler(antigravityPreToolCommand(), timeout: 10)]
+            ]]
+        ]
+        try writeJSON(root, to: paths.antigravityHooks)
+    }
+
+    func removeAntigravityHooks() {
+        let fm = FileManager.default
+        guard var root = readJSON(paths.antigravityHooks) else { return }
+        root.removeValue(forKey: "prisma")
+        if root.isEmpty {
+            try? fm.removeItem(at: paths.antigravityHooks)
+        } else {
+            try? writeJSON(root, to: paths.antigravityHooks)
+        }
+    }
+
+    /// One backup per file, so a repeated connect does not overwrite the
+    /// original with an already-connected copy.
+    private func backup(_ file: URL) throws {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: file.path) else { return }
+        let copy = file.appendingPathExtension("prisma-backup")
+        guard !fm.fileExists(atPath: copy.path) else { return }
+        try fm.copyItem(at: file, to: copy)
     }
 
     // MARK: Files
@@ -791,7 +1062,9 @@ final class AgentConnector: ObservableObject {
             let cli: [AgentKind: Bool] = [
                 .codex: Shell.exists("codex"),
                 .claudeCode: Shell.exists("claude"),
-                .openCode: Shell.exists("opencode")
+                .openCode: Shell.exists("opencode"),
+                .muse: Shell.exists("muse"),
+                .antigravity: Shell.exists("agy")
             ]
             let statuses = AgentKind.allCases.map { kind in
                 self.installer.status(for: kind, cliAvailable: cli[kind] ?? false)

@@ -292,6 +292,93 @@ if [ -d "$HOME/.config/opencode" ] || command -v opencode >/dev/null 2>&1; then
   opencode reload >/dev/null 2>&1 || true
 fi
 
+echo "🪝 Instalando hooks de Muse Code y Antigravity…"
+python3 - "$SUPPORT" "$PROJECT_ROOT/plugin/AGENTS.md" <<'PY'
+import json
+import os
+from pathlib import Path
+import shutil
+import sys
+
+support, agents_md = Path(sys.argv[1]), Path(sys.argv[2])
+body = agents_md.read_text(encoding='utf-8').rstrip()
+
+
+def append_block(path):
+    if path.exists() and '<ForPrisma>' in path.read_text(encoding='utf-8'):
+        return
+    existing = path.read_text(encoding='utf-8') if path.exists() else ''
+    addition = (existing.rstrip() + '\n\n' if existing.strip() else '') + body + '\n'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(addition, encoding='utf-8')
+
+
+def is_prisma(hook):
+    command = hook.get('command', '')
+    return (hook.get('statusMessage') in ('Prisma', 'CodexVoz')
+            or 'Application Support/Prisma/on_' in command
+            or 'Application Support/CodexVoz/' in command)
+
+
+def write(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+
+config_home = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')
+muse, antigravity = config_home / 'muse', Path.home() / '.gemini' / 'config'
+
+if shutil.which('muse') or muse.exists():
+    append_block(muse / 'AGENTS.md')
+    settings_path = muse / 'settings.json'
+    data = json.loads(settings_path.read_text(encoding='utf-8')) if settings_path.exists() else {}
+    data.setdefault('schema_version', 1)
+    hooks = data.setdefault('hooks', {})
+    turn = f'bash "{support}/on_turn.sh" muse'
+    stop = f'bash "{support}/on_stop.sh" muse'
+    specs = [
+        ('SessionStart', turn, 10, False, None),
+        ('UserPromptSubmit', turn, 10, False, None),
+        ('Interrupt', turn, 3, True, None),
+        ('StopFailure', turn, 3, False, None),
+        ('SessionEnd', turn, 3, False, None),
+        ('Stop', stop, 10, False, None),
+        ('PermissionRequest', stop, 10, False, None),
+        ('PreToolUse', stop, 10, False, 'request_user_input|request_user_input_async'),
+    ]
+    for event, command, timeout, is_async, matcher in specs:
+        groups = []
+        for group in hooks.get(event, []) or []:
+            inner = [h for h in group.get('hooks', []) if not is_prisma(h)]
+            if inner:
+                group = dict(group, hooks=inner)
+                groups.append(group)
+        entry = {'type': 'command', 'command': command, 'timeout': timeout, 'statusMessage': 'Prisma'}
+        if is_async:
+            entry['async'] = True
+        group = {'hooks': [entry]}
+        if matcher:
+            group['matcher'] = matcher
+        groups.append(group)
+        hooks[event] = groups
+    write(settings_path, data)
+
+if shutil.which('agy') or antigravity.exists():
+    append_block(antigravity / 'AGENTS.md')
+    hooks_path = antigravity / 'hooks.json'
+    data = json.loads(hooks_path.read_text(encoding='utf-8')) if hooks_path.exists() else {}
+    data['prisma'] = {
+        'SessionStart': [{'type': 'command', 'command': f'bash "{support}/on_turn.sh" antigravity SessionStart', 'timeout': 10}],
+        'PreInvocation': [{'type': 'command', 'command': f'bash "{support}/on_turn.sh" antigravity PreInvocation', 'timeout': 10}],
+        'Stop': [{'type': 'command', 'command': f'bash "{support}/on_stop.sh" antigravity Stop', 'timeout': 15}],
+        'PreToolUse': [{
+            'matcher': 'ask_question|ask_permission',
+            'hooks': [{'type': 'command', 'command': f'bash "{support}/on_stop.sh" antigravity PreToolUse', 'timeout': 10}],
+        }],
+    }
+    write(hooks_path, data)
+PY
+
 echo "⚙️  Creando configuración local…"
 if [ -f "$SUPPORT/config.json" ]; then
   TOKEN="$(jq -r '.token // empty' "$SUPPORT/config.json")"
@@ -315,7 +402,7 @@ open "$HOME/Applications/Prisma.app"
 
 cat <<EOF
 
-✅ Prisma instalado en Codex, Claude Code y OpenCode.
+✅ Prisma instalado en Codex, Claude Code, OpenCode, Muse Code y Antigravity.
 
 - App: ~/Applications/Prisma.app
 - Datos: $SUPPORT

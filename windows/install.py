@@ -7,7 +7,12 @@ import agents
 def detected(kind):
     if agents.cli_available(kind):
         return True
-    folder = {'claude': agents.CLAUDE, 'opencode': agents.OPENCODE}.get(kind, agents.CODEX)
+    folder = {
+        'claude': agents.CLAUDE,
+        'opencode': agents.OPENCODE,
+        'muse': agents.MUSE,
+        'antigravity': agents.ANTIGRAVITY,
+    }.get(kind, agents.CODEX)
     return folder.exists()
 
 
@@ -20,7 +25,8 @@ def report(name, warnings):
 def main():
     agents.ensure_support()
     report('Codex', agents.connect('codex'))
-    for kind, name in (('claude', 'Claude Code'), ('opencode', 'OpenCode')):
+    for kind, name in (('claude', 'Claude Code'), ('opencode', 'OpenCode'),
+                       ('muse', 'Muse Code'), ('antigravity', 'Antigravity')):
         if detected(kind):
             report(name, agents.connect(kind))
         else:

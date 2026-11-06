@@ -1,9 +1,9 @@
 Prisma para Windows 1.0.4
 =========================
 
-Prisma lee en voz alta las respuestas de Codex, Claude Code y OpenCode, y
-muestra un orbe animado mientras habla. La app vive en la bandeja del sistema
-y se configura desde Ajustes.
+Prisma lee en voz alta las respuestas de Codex, Claude Code, OpenCode, Muse
+Code y Antigravity, y muestra un orbe animado mientras habla. La app vive en
+la bandeja del sistema y se configura desde Ajustes.
 
 Requisitos
 ----------
@@ -14,9 +14,9 @@ Requisitos
 - PowerShell, conexión a internet y, si quieres instalar desde el código,
   Git. Edge necesita internet para cada síntesis; Piper y la voz de Windows
   funcionan sin conexión.
-- Codex, Claude Code u OpenCode instalados de forma nativa en Windows.
-  WSL y los contenedores usan otras rutas y procesos; esta instalación no
-  conecta sus hooks con la app de Windows.
+- Codex, Claude Code, OpenCode, Muse Code o Antigravity instalados de forma
+  nativa en Windows. WSL y los contenedores usan otras rutas y procesos; esta
+  instalación no conecta sus hooks con la app de Windows.
 
 Instalación desde este ZIP
 --------------------------
@@ -59,15 +59,16 @@ o desconectar cualquiera de ellos:
 
 1. Haz clic derecho en el icono de Prisma en la bandeja.
 2. Elige "Ajustes".
-3. En la sección "Agentes", pulsa "Conectar" junto a Codex, Claude Code u
-   OpenCode.
+3. En la sección "Agentes", pulsa "Conectar" junto a Codex, Claude Code,
+   OpenCode, Muse Code o Antigravity.
 
 Prisma instala sus hooks e instrucciones en tu carpeta de usuario
-(%USERPROFILE%\.codex, %USERPROFILE%\.claude o la configuración de OpenCode)
-sin depender de esta carpeta. Solo necesita que la CLI del agente esté
-instalada. Si falta, la fila lo indica. Estas conexiones valen para sesiones
-locales en este PC: las sesiones en la nube, en WSL, en contenedores o en
-otro equipo no ejecutan estos hooks.
+(%USERPROFILE%\.codex, %USERPROFILE%\.claude, la configuración de OpenCode o
+de Muse Code, y %USERPROFILE%\.gemini\config para Antigravity) sin depender
+de esta carpeta. Solo necesita que la CLI del agente esté instalada. Si
+falta, la fila lo indica. Estas conexiones valen para sesiones locales en
+este PC: las sesiones en la nube, en WSL, en contenedores o en otro equipo no
+ejecutan estos hooks.
 
 "Desconectar" elimina únicamente los cambios de Prisma y conserva el resto
 de la configuración del agente. Reinicia las sesiones abiertas para que

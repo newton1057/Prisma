@@ -6,7 +6,9 @@ struct TestAgentWindows {
     static func main() {
         testOpenCode()
         testClaudeCode()
-        print("Claude Code and OpenCode window detection passed")
+        testMuse()
+        testAntigravity()
+        print("Claude Code, OpenCode, Muse Code and Antigravity window detection passed")
     }
 
     static func testOpenCode() {
@@ -51,5 +53,58 @@ struct TestAgentWindows {
         precondition(Set(windows.keys) == [200, 201, 204, 207], "Unexpected Claude Code windows: \(windows.keys.sorted())")
         precondition(windows[200]! == nil && windows[204]! == nil)
         precondition(windows[201]! == resumed && windows[207]! == resumed, "Resumed sessions not recognised")
+    }
+
+    static func testMuse() {
+        let resumed = "01a1aeda-0bfb-7493-8e01-f9aeba250906"
+        let processes = """
+          300 muse
+          301 /Users/me/.local/bin/muse
+          302 /Users/me/.local/bin/muse-bin-1.4.14-R7309.1
+          303 muse exec "arregla el test"
+          304 muse exec --provider meta "hola"
+          305 muse resume \(resumed)
+          306 muse resume --last
+          307 muse skills list
+          308 muse serve
+          309 muse "haz algo"
+          310 muse --model muse-spark-1.3
+          311 /bin/zsh -c muse
+          312 muse-helper
+        """
+        let windows = MuseWindows.windows(in: processes)
+        precondition(
+            Set(windows.keys) == [300, 301, 302, 305, 306, 309, 310],
+            "Unexpected Muse Code windows: \(windows.keys.sorted())"
+        )
+        precondition(windows[300]! == nil && windows[310]! == nil)
+        precondition(windows[305]! == resumed, "Resumed Muse sessions not recognised")
+        precondition(windows[306]! == nil, "resume --last has no session id to match")
+    }
+
+    static func testAntigravity() {
+        let resumed = "08261929-b631-4192-9373-26bc0a503b26"
+        let processes = """
+          400 agy
+          401 /Users/me/.local/bin/agy
+          402 agy -p "responde hola"
+          403 agy --print "hola"
+          404 agy update
+          405 agy plugin list
+          406 agy --conversation \(resumed)
+          407 agy --continue
+          408 agy -i "haz algo"
+          409 agy mcp add foo
+          410 agy agents
+          411 /bin/zsh -c agy
+          412 agy --model "Gemini 3" "haz algo"
+        """
+        let windows = AntigravityWindows.windows(in: processes)
+        precondition(
+            Set(windows.keys) == [400, 401, 406, 407, 408, 412],
+            "Unexpected Antigravity windows: \(windows.keys.sorted())"
+        )
+        precondition(windows[400]! == nil && windows[408]! == nil)
+        precondition(windows[406]! == resumed, "Resumed Antigravity conversations not recognised")
     }
 }

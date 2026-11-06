@@ -42,7 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var resumedSessions: Set<String> = []
     private var sessionMonitor: DispatchSourceTimer?
     /// Agents whose sessions get their own persistent orb in the row.
-    private let sessionSources: Set<String> = ["codex", "claude-code", "opencode"]
+    private let sessionSources: Set<String> = ["codex", "claude-code", "opencode", "muse", "antigravity"]
     /// Agent process behind each Claude Code and OpenCode orb, so the orb
     /// follows its window to a new conversation and leaves when it closes.
     private var sessionProcesses: [String: Int32] = [:]
@@ -285,12 +285,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let codexPIDs = processes.map(CodexSessionsMonitor.resumedSessionPIDs(in:)) ?? [:]
             let claude = processes.map(ClaudeCodeWindows.windows(in:))
             let openCode = processes.map(OpenCodeWindows.windows(in:))
+            let muse = processes.map(MuseWindows.windows(in:))
+            let antigravity = processes.map(AntigravityWindows.windows(in:))
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 if let sessions { self.updateResumedSessions(sessions, pids: codexPIDs) }
                 self.checkSessionProcesses()
                 if let claude { self.updateClaudeWindows(claude) }
                 if let openCode { self.updateOpenCodeWindows(openCode) }
+                if let muse { self.updateMuseWindows(muse) }
+                if let antigravity { self.updateAntigravityWindows(antigravity) }
                 self.checkThinkingTranscripts()
             }
         }
@@ -356,6 +360,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Open Muse Code and Antigravity windows wait with their own orb, like
+    /// Claude Code; their hooks report the same process and take it over.
+    private func updateMuseWindows(_ windows: [Int32: String?]) {
+        let owners = Set(sessionProcesses.values)
+        for (pid, resumed) in windows.sorted(by: { $0.key < $1.key }) where !owners.contains(pid) {
+            _ = ensureSession(resumed ?? "muse:\(pid)", source: "muse", pid: Int(pid))
+        }
+    }
+
+    private func updateAntigravityWindows(_ windows: [Int32: String?]) {
+        let owners = Set(sessionProcesses.values)
+        for (pid, resumed) in windows.sorted(by: { $0.key < $1.key }) where !owners.contains(pid) {
+            _ = ensureSession(resumed ?? "agy:\(pid)", source: "antigravity", pid: Int(pid))
+        }
+    }
+
     /// Every open OpenCode window waits with its own orb; sessions whose
     /// window was not noticed yet join it instead of adding another orb.
     private func updateOpenCodeWindows(_ windows: [Int32: String]) {
@@ -398,7 +418,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingEnds.removeValue(forKey: id)?.cancel()
         let resolvedSource = source ?? (openCodeOrbs.contains(id) || id.hasPrefix("opencode:")
             ? "opencode"
-            : (id.hasPrefix("claude:") ? "claude-code" : "codex"))
+            : (id.hasPrefix("claude:") ? "claude-code"
+               : (id.hasPrefix("muse:") ? "muse"
+                  : (id.hasPrefix("agy:") ? "antigravity" : "codex"))))
         if resolvedSource == "codex", let pid, pid > 1 {
             codexProcesses[id] = Int32(clamping: pid)
         }
@@ -442,10 +464,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return target
     }
 
-    /// Claude Code and OpenCode report their window's process; Codex keeps
-    /// its own session lifecycle.
+    /// Claude Code, OpenCode, Muse Code and Antigravity report their window's
+    /// process; Codex keeps its own session lifecycle.
     private func ownerProcess(_ pid: Int?, source: String?) -> Int32? {
-        guard let pid, pid > 1, source == "claude-code" || source == "opencode" else { return nil }
+        guard let pid, pid > 1,
+              source == "claude-code" || source == "opencode"
+                || source == "muse" || source == "antigravity" else { return nil }
         return Int32(clamping: pid)
     }
 
@@ -597,6 +621,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "codex": agentName = "Codex"
         case "claude-code": agentName = "Claude Code"
         case "opencode": agentName = "OpenCode"
+        case "muse": agentName = "Muse Code"
+        case "antigravity": agentName = "Antigravity"
         default: agentName = "Prisma"
         }
         if target.model.agentTitle != agentName {

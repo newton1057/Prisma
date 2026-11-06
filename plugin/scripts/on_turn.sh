@@ -1,15 +1,18 @@
 #!/bin/bash
 # Señales de sesión, inicio de turno e interrupción de los agentes.
-# Uso: on_turn.sh [codex|claude-code|opencode] < evento JSON del hook
+# Uso: on_turn.sh [codex|claude-code|opencode|muse|antigravity] [evento]
+# Los hooks de Antigravity no traen hook_event_name ni source: van en los argumentos.
 set -uo pipefail
 INPUT="$(cat)"
 SUPPORT="$HOME/Library/Application Support/Prisma"
 RUNTIME="$SUPPORT/runtime.json"
 field() { printf '%s' "$INPUT" | jq -r "$1 // empty" 2>/dev/null; }
 
-EVENT="$(field '.hook_event_name')"
-TRANSCRIPT="$(field '.transcript_path')"
 SOURCE="${1:-}"
+EVENT="$(field '.hook_event_name')"
+[ -n "$EVENT" ] || EVENT="${2:-}"
+TRANSCRIPT="$(field '.transcript_path')"
+[ -n "$TRANSCRIPT" ] || TRANSCRIPT="$(field '.transcriptPath')"
 # A Codex transcript identifies Codex even through an older or shared hook.
 # Older Claude Code hooks pass no argument; their transcript identifies them.
 if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && head -n 5 "$TRANSCRIPT" 2>/dev/null | grep -q '"type":"session_meta"'; then
@@ -20,17 +23,18 @@ fi
 
 # Every session of these agents has its own orb, which waits between turns.
 case "$SOURCE" in
-  codex|claude-code|opencode) PERSISTENT=1 ;;
+  codex|claude-code|opencode|muse|antigravity) PERSISTENT=1 ;;
   *) PERSISTENT=0 ;;
 esac
 case "$EVENT" in
   SessionStart) [ "$PERSISTENT" = 1 ] || { echo '{}'; exit 0; }; ENDPOINT=session/start ;;
   SessionEnd) if [ "$PERSISTENT" = 1 ]; then ENDPOINT=session/end; else ENDPOINT=interrupt; fi ;;
-  UserPromptSubmit) ENDPOINT=thinking ;;
+  UserPromptSubmit|PreInvocation) ENDPOINT=thinking ;;
   Interrupt|StopFailure) ENDPOINT=interrupt ;;
   *) echo '{}'; exit 0 ;;
 esac
 SESSION="$(field '.session_id')"
+[ -n "$SESSION" ] || SESSION="$(field '.conversationId')"
 
 # The Claude Code window's process lets Prisma remove its orb when the window
 # closes and keep the orb in place when it moves on to a new conversation.
@@ -52,15 +56,22 @@ agent_pid() {
 PID=""
 WATCH=""
 FOLDER=""
-if [ "$SOURCE" = claude-code ]; then
-  case "$ENDPOINT" in
-    session/start|thinking) PID="$(agent_pid)" ;;
-  esac
+case "$SOURCE" in
+  claude-code|muse|antigravity)
+    case "$ENDPOINT" in
+      session/start|thinking) PID="$(agent_pid)" ;;
+    esac
+    ;;
+esac
+if [ "$SOURCE" = claude-code ] && [ "$ENDPOINT" = thinking ]; then
   # Claude Code has no interrupt hook; Prisma notices Escape in the transcript.
-  [ "$ENDPOINT" = thinking ] && WATCH="$TRANSCRIPT"
-elif [ "$SOURCE" = opencode ]; then
-  FOLDER="$(field '.directory')"
+  WATCH="$TRANSCRIPT"
 fi
+case "$SOURCE" in
+  opencode) FOLDER="$(field '.directory')" ;;
+  muse) FOLDER="$(field '.cwd')" ;;
+  antigravity) FOLDER="$(field '.workspacePaths[0]')" ;;
+esac
 case "$PID" in *[!0-9]*) PID="" ;; esac
 
 # Only launch on start; interruption must not start a new instance.

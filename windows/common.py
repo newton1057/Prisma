@@ -59,6 +59,10 @@ def transcript_text(path):
         for line in reversed(lines):
             try: obj = json.loads(line)
             except ValueError: continue
+            # Antigravity: the last model reply of the conversation.
+            if obj.get('source') == 'MODEL' and obj.get('type') == 'PLANNER_RESPONSE':
+                content = obj.get('content')
+                return content if isinstance(content, str) else ''
             message = obj.get('payload') if obj.get('type') == 'response_item' else obj.get('message')
             if not isinstance(message, dict) or message.get('role') != 'assistant': continue
             content = message.get('content', [])

@@ -176,6 +176,8 @@ struct SettingsView: View {
                 HaloThemeRow(title: "Codex", selection: $settings.codexTheme)
                 HaloThemeRow(title: "Claude Code", selection: $settings.claudeTheme)
                 HaloThemeRow(title: "OpenCode", selection: $settings.openCodeTheme)
+                HaloThemeRow(title: "Muse Code", selection: $settings.museTheme)
+                HaloThemeRow(title: "Antigravity", selection: $settings.antigravityTheme)
             }
 
             Section("Servidor local") {
@@ -188,7 +190,7 @@ struct SettingsView: View {
                     Spacer()
                 }
 
-                Text("Los plugins de Codex, Claude Code y OpenCode llaman a esta app en 127.0.0.1. Solo acepta peticiones con el token local.")
+                Text("Los plugins de Codex, Claude Code, OpenCode, Muse Code y Antigravity llaman a esta app en 127.0.0.1. Solo acepta peticiones con el token local.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

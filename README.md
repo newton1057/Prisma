@@ -6,7 +6,7 @@
 
 Voice notifications and an animated orb for your coding agents on macOS and Windows.
 
-**Codex · Claude Code · OpenCode**
+**Codex · Claude Code · OpenCode · Muse Code · Antigravity**
 
 [Installation](#installation) · [How it works](#how-it-works) · [Settings](#settings) · [Troubleshooting](#troubleshooting)
 
@@ -20,10 +20,10 @@ An animated floating orb appears with each notification. Prisma can also lower b
 
 ## Features
 
-- **Completion and question notifications.** Hear updates and requests for information or confirmation from Codex, Claude Code, and OpenCode.
+- **Completion and question notifications.** Hear updates and requests for information or confirmation from Codex, Claude Code, OpenCode, Muse Code, and Antigravity.
 - **Summaries made for listening.** Agents are instructed to add a short voice block to their responses; Prisma extracts and cleans it before speaking.
 - **A choice of voices.** Use Edge Neural TTS, local Piper, or a system voice. The default is Ava Multilingual; if Edge fails, Prisma tries Piper and then the system voice.
-- **Configurable orb.** Choose its position, whether it remains visible briefly after speaking, and independent halo color themes (10 palettes) for Codex, Claude Code, and OpenCode.
+- **Configurable orb.** Choose its position, whether it remains visible briefly after speaking, and independent halo color themes (10 palettes) for Codex, Claude Code, OpenCode, Muse Code, and Antigravity.
 - **Interactive session orbs (macOS).** Waiting orbs stay compact and semi-transparent (50% opacity) so you can see behind them, expand individually to 95% opacity when thinking, speaking, or hovered, unfold a liquid-glass info capsule with the agent name and session title on hover, and focus their exact terminal window and tab when clicked.
 - **Adjustable background audio.** Temporarily lower background audio while Prisma speaks, or disable ducking altogether.
 
@@ -33,7 +33,7 @@ An animated floating orb appears with each notification. Prisma can also lower b
 
 - **macOS 15 or later.** Prisma builds as a native Swift app. The published DMG is for Apple Silicon.
 - **Apple developer tools** with Swift, plus Git, Python 3 with `venv`, `curl`, and `jq`. For example, install the command line tools with `xcode-select --install` and `jq` with `brew install jq` if you use Homebrew.
-- At least one supported agent: Codex, Claude Code, or OpenCode.
+- At least one supported agent: Codex, Claude Code, OpenCode, Muse Code, or Antigravity.
 - Internet access to install dependencies, download the Piper model, and use Edge Neural TTS. Piper and the Apple voice can work offline once prepared.
 
 ### Windows
@@ -63,11 +63,11 @@ cd ~/Desktop/Prisma
 
 `setup_voice.sh` creates a Python environment, installs `piper-tts` and `edge-tts`, and downloads the Piper voice model (about 60 MB). The model is not included in the repository.
 
-`install.sh` builds everything from source and copies it to `~/Applications/Prisma.app`, preparing voice and configuration files in `~/Library/Application Support/Prisma/`. It also configures the three agents directly; the app can do the same from its settings, as described below.
+`install.sh` builds everything from source and copies it to `~/Applications/Prisma.app`, preparing voice and configuration files in `~/Library/Application Support/Prisma/`. It also configures the agents it finds directly; the app can do the same from its settings, as described below.
 
 #### Connecting your agents
 
-Open **Prisma → Ajustes… → Agentes** and press **Conectar** next to Codex, Claude Code, or OpenCode. The app installs the hooks, instructions and plugin in your user folder (`~/.codex`, `~/.claude`, `~/.config/opencode`), so it does not need the repository or the DMG's contents afterward. Only the agent's CLI must be installed; when it is missing, the row says so instead of offering the button. **Desconectar** removes only Prisma's changes and leaves the rest of your agent configuration untouched.
+Open **Prisma → Ajustes… → Agentes** and press **Conectar** next to Codex, Claude Code, OpenCode, Muse Code, or Antigravity. The app installs the hooks, instructions and plugin in your user folder (`~/.codex`, `~/.claude`, `~/.config/opencode`, `~/.config/muse`, `~/.gemini/config`), so it does not need the repository or the DMG's contents afterward. Only the agent's CLI must be installed; when it is missing, the row says so instead of offering the button. **Desconectar** removes only Prisma's changes and leaves the rest of your agent configuration untouched.
 
 Notifications cover **local sessions**. Sessions that run in the cloud or on another machine do not execute the hooks or plugin installed on your Mac, so Prisma cannot announce them.
 
@@ -109,7 +109,7 @@ cd Prisma
 powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\install.ps1
 ```
 
-The installer prepares the environment and voices in `%LOCALAPPDATA%\Prisma`, creates a Start menu shortcut, configures the agents it finds, and opens Prisma. Open the tray menu → **Ajustes → Agentes** to connect, reconnect, or disconnect Codex, Claude Code, and OpenCode later; it installs everything in your user folder and does not need the repository afterward. Restart open agent sessions to load new hooks. Codex may still ask you to approve its hooks if automatic trust fails. The orb appears on the primary display and the app is controlled from the system tray. As on macOS, notifications cover **local sessions** only; cloud sessions and sessions on other machines do not run these hooks.
+The installer prepares the environment and voices in `%LOCALAPPDATA%\Prisma`, creates a Start menu shortcut, configures the agents it finds, and opens Prisma. Open the tray menu → **Ajustes → Agentes** to connect, reconnect, or disconnect Codex, Claude Code, OpenCode, Muse Code, and Antigravity later; it installs everything in your user folder and does not need the repository afterward. Restart open agent sessions to load new hooks. Codex may still ask you to approve its hooks if automatic trust fails. The orb appears on the primary display and the app is controlled from the system tray. As on macOS, notifications cover **local sessions** only; cloud sessions and sessions on other machines do not run these hooks.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\windows\test.ps1 -Text "Hello. Prisma is working on Windows."
@@ -120,7 +120,7 @@ See the [Windows guide](docs/windows.md) for requirements, agent connections, se
 ## How it works
 
 ```text
-Codex / Claude Code / OpenCode
+Codex / Claude Code / OpenCode / Muse Code / Antigravity
           │
           │  final response or question
           ▼
@@ -141,16 +141,18 @@ I finished the changes and checked that they work.
 
 Prisma reads the last valid block and ignores tags mentioned in code examples. If the agent omits it, Prisma falls back to the available text and removes links and Markdown, so the notification may be longer. For interactive questions, it can also build an announcement from the question and its options.
 
-The Codex and Claude Code hooks and the OpenCode plugin send notifications to an app server listening on `127.0.0.1`. Speak and stop requests require a local token. The app uses the first available port in its range and records the active port in `runtime.json`.
+The Codex, Muse Code, and Antigravity hooks, the Claude Code plugin hooks, and the OpenCode plugin send notifications to an app server listening on `127.0.0.1`. Speak and stop requests require a local token. The app uses the first available port in its range and records the active port in `runtime.json`.
 
 ## Settings
 
-On macOS, Prisma can show the voice orb as soon as Codex, Claude Code, or OpenCode receives a message. While thinking, its prism light bends into a softly rotating iridescent ring within the glass; when the reply arrives, the ring opens and unrolls into the voice horizon, which reacts to the voice. Enable or disable it under **Animación → Mostrar el orbe mientras el agente piensa**. The setting is enabled by default; restart the agent after installing to load its integration. An interruption returns the session's orb to its waiting appearance. Claude Code has no hook for interruptions, so Prisma notices the interruption Claude Code writes to the session transcript; it reads only the lines added during that turn.
+On macOS, Prisma can show the voice orb as soon as Codex, Claude Code, OpenCode, Muse Code, or Antigravity receives a message. While thinking, its prism light bends into a softly rotating iridescent ring within the glass; when the reply arrives, the ring opens and unrolls into the voice horizon, which reacts to the voice. Enable or disable it under **Animación → Mostrar el orbe mientras el agente piensa**. The setting is enabled by default; restart the agent after installing to load its integration. An interruption returns the session's orb to its waiting appearance. Claude Code has no hook for interruptions, so Prisma notices the interruption Claude Code writes to the session transcript; it reads only the lines added during that turn.
 
-Codex, Claude Code, and OpenCode sessions have separate persistent orbs, arranged side by side and wrapped into additional rows if needed. Between turns, each orb rests in a compact, semi-transparent state (50% opacity) so the menu bar and windows behind it remain visible. When a specific session is thinking or speaking—or when you move the pointer over its orb—only that orb expands to its active size and 95% opacity while its neighbors slide slightly aside. Clicking any session orb brings its terminal window and tab (`Terminal.app` or `iTerm2`) directly to the front. Replies from multiple sessions are spoken in order.
+Codex, Claude Code, OpenCode, Muse Code, and Antigravity sessions have separate persistent orbs, arranged side by side and wrapped into additional rows if needed. Between turns, each orb rests in a compact, semi-transparent state (50% opacity) so the menu bar and windows behind it remain visible. When a specific session is thinking or speaking—or when you move the pointer over its orb—only that orb expands to its active size and 95% opacity while its neighbors slide slightly aside. Clicking any session orb brings its terminal window and tab (`Terminal.app` or `iTerm2`) directly to the front. Replies from multiple sessions are spoken in order.
 
 - **Codex:** Prisma detects open `codex resume <session-id>` terminal clients, including ones already running when Prisma starts, and removes their orbs after those clients close and their queued speech finishes. Other Codex sessions use its session and prompt hooks; depending on the client, an empty session may not emit its start hook until the first prompt, and disconnecting a terminal can leave the underlying session running rather than emit a session-end hook.
 - **Claude Code:** every open Claude Code window has an orb, including windows opened before Prisma started. Its hooks report the window's process, so the orb stays in place when the window moves to another conversation (`/clear`, `/resume`) and leaves when the window closes, even if Claude Code could not send its session-end hook.
+- **Muse Code:** every open `muse` window has an orb, including windows opened before Prisma started. Its user hooks report the window's process and the turn events; the Stop hook carries the final message, and `request_user_input` questions are announced with their options.
+- **Antigravity:** every open `agy` window has an orb. Its global hooks in `~/.gemini/config/hooks.json` report the conversation and workspace, and the reply is read from the session transcript (`PLANNER_RESPONSE` entries). The `ask_question` and `ask_permission` tools are announced, and the hook answers `allow` so the agent's own permission flow still decides.
 - **OpenCode:** OpenCode runs its agent in a shared background service, so Prisma gives each open OpenCode window (`opencode` or `opencode run`) an orb by watching those processes. A session takes over the orb of the window opened in its folder; with several windows in the same folder, Prisma cannot tell which window shows which session. Sessions from clients Prisma does not see, such as a remote client, get an orb that leaves 20 seconds after their reply.
 
 The current app interface uses Spanish labels. On macOS, open **Prisma → Ajustes…** (Settings) from the menu bar; on Windows, open **Ajustes** from the system tray. Options include:
@@ -162,8 +164,8 @@ The current app interface uses Spanish labels. On macOS, open **Prisma → Ajust
 | **Speed** | 0.8× to 1.2×. |
 | **Background audio** | Enable or disable ducking and adjust its strength. |
 | **Animation** | Target display (any connected monitor, active display, or pointer display), global shortcut to switch displays (`⌃⌥M` by default), orb position (top/bottom row, left/right vertical column, center, or corner), global shortcut to cycle positions (`⌃⌥P` by default), thinking mode, and how long it stays visible afterward. |
-| **Halo color by agent** | Independent halo palette (10 themes) for Codex, Claude Code, and OpenCode across waiting, thinking, and voice states. |
-| **Agentes** | Connect or disconnect Codex, Claude Code, and OpenCode. Shows whether each integration is connected, incomplete, or unavailable because its CLI is not installed. It covers local sessions only. |
+| **Halo color by agent** | Independent halo palette (10 themes) for Codex, Claude Code, OpenCode, Muse Code, and Antigravity across waiting, thinking, and voice states. |
+| **Agentes** | Connect or disconnect Codex, Claude Code, OpenCode, Muse Code, and Antigravity. Shows whether each integration is connected, incomplete, or unavailable because its CLI is not installed. It covers local sessions only. |
 
 On macOS, ducking is enabled by default and affects the **output device's global volume**, including calls and notifications. By default, it lowers the volume to 35% of its previous level and restores it afterward. Devices whose volume cannot be controlled by macOS are skipped. See [Background audio](docs/audio-ducking.md) for details and limitations. Windows uses per-session ducking; see the [Windows guide](docs/windows.md).
 

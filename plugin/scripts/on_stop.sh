@@ -1,11 +1,14 @@
 #!/bin/bash
-# Prisma: hook Stop compatible con Codex, Claude Code y OpenCode.
+# Prisma: hook Stop compatible con Codex, Claude Code, OpenCode, Muse Code y Antigravity.
+# Uso: on_stop.sh [codex|claude-code|opencode|muse|antigravity] [evento]
 set -uo pipefail
 
 INPUT="$(cat)"
 SUPPORT="$HOME/Library/Application Support/Prisma"
 RUNTIME="$SUPPORT/runtime.json"
 LOG="$SUPPORT/hook.log"
+SOURCE_HINT="${1:-}"
+EVENT_HINT="${2:-}"
 
 mkdir -p "$SUPPORT"
 
@@ -19,15 +22,32 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-EVENT="$(printf '%s' "$INPUT" | jq -r '.hook_event_name // "Stop"' 2>/dev/null)"
-if [ -n "$EVENT" ] && [ "$EVENT" != "Stop" ] && [ "$EVENT" != "PreToolUse" ] && [ "$EVENT" != "PermissionRequest" ]; then
-  echo '{}'
+EVENT="$(printf '%s' "$INPUT" | jq -r '.hook_event_name // empty' 2>/dev/null)"
+[ -n "$EVENT" ] || EVENT="$EVENT_HINT"
+[ -n "$EVENT" ] || EVENT="Stop"
+if [ "$EVENT" != "Stop" ] && [ "$EVENT" != "PreToolUse" ] && [ "$EVENT" != "PermissionRequest" ]; then
+  if [ "$SOURCE_HINT" = "antigravity" ] && [ "$EVENT" = "PreToolUse" ]; then
+    echo '{"decision":"allow"}'
+  else
+    echo '{}'
+  fi
   exit 0
 fi
 
-# 1. Intentar leer last_assistant_message directo (Codex, OpenCode y versiones nuevas de Claude Code)
+# Antigravity deniega una herramienta cuando el hook no responde con una decisión.
+respond() {
+  if [ "$SOURCE_HINT" = "antigravity" ] && [ "$EVENT" = "PreToolUse" ]; then
+    echo '{"decision":"allow"}'
+  else
+    echo '{}'
+  fi
+}
+
+# 1. Intentar leer last_assistant_message directo (Codex, OpenCode, Muse Code y
+#    versiones nuevas de Claude Code)
 MESSAGE="$(printf '%s' "$INPUT" | jq -r '.last_assistant_message // empty' 2>/dev/null)"
-SOURCE="$(printf '%s' "$INPUT" | jq -r '.source // "codex"' 2>/dev/null)"
+SOURCE="$SOURCE_HINT"
+[ -n "$SOURCE" ] || SOURCE="$(printf '%s' "$INPUT" | jq -r '.source // empty' 2>/dev/null)"
 
 detect_source_from_transcript() {
   local path="$1"
@@ -43,8 +63,9 @@ detect_source_from_transcript() {
 }
 
 # Claude supplies a direct final message too; identify it from its transcript
-# even when transcript parsing is not needed to obtain the text.
-if [ -z "$(printf '%s' "$INPUT" | jq -r '.source // empty' 2>/dev/null)" ]; then
+# even when transcript parsing is not needed to obtain the text. A source hint
+# from the command line (Muse Code, Antigravity) is never overridden.
+if [ -z "$SOURCE" ] && [ -z "$(printf '%s' "$INPUT" | jq -r '.source // empty' 2>/dev/null)" ]; then
   SOURCE="$(detect_source_from_transcript "$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)")"
 fi
 
@@ -126,15 +147,17 @@ extract_questions_from_tool_input() {
 }
 
 # 1b. Si es PreToolUse de una herramienta de preguntas
-if [ "$EVENT" = "PreToolUse" ]; then
+if [ "$EVENT" = "PreToolUse" ] && [ "$SOURCE" != "antigravity" ]; then
   TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)"
   case "$TOOL_NAME" in
     AskUserQuestion|request_user_input|request_user_input_async|send_user_message_async|send_message_to_user_async|question)
-      SOURCE="codex"
-      [ "$TOOL_NAME" = "AskUserQuestion" ] && SOURCE="claude-code"
-
       TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)"
-      SOURCE="$(detect_source_from_transcript "$TRANSCRIPT_PATH")"
+      if [ -z "$SOURCE" ]; then
+        SOURCE="codex"
+        [ "$TOOL_NAME" = "AskUserQuestion" ] && SOURCE="claude-code"
+        SOURCE="$(detect_source_from_transcript "$TRANSCRIPT_PATH")"
+        [ -n "$SOURCE" ] || SOURCE="codex"
+      fi
 
       QUESTIONS_TEXT="$(extract_questions_from_tool_input)"
       RECENT_TEXT=""
@@ -149,17 +172,20 @@ if [ "$EVENT" = "PreToolUse" ]; then
       fi
       ;;
     *)
-      echo '{}'
+      respond
       exit 0
       ;;
   esac
 fi
 
-# 1c. Si es PermissionRequest (Codex o Claude Code pide confirmación/permiso al usuario)
+# 1c. Si es PermissionRequest (Codex, Claude Code o Muse Code pide confirmación/permiso al usuario)
 if [ "$EVENT" = "PermissionRequest" ]; then
   TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)"
   TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)"
-  SOURCE="$(detect_source_from_transcript "$TRANSCRIPT_PATH")"
+  if [ -z "$SOURCE" ]; then
+    SOURCE="$(detect_source_from_transcript "$TRANSCRIPT_PATH")"
+    [ -n "$SOURCE" ] || SOURCE="codex"
+  fi
 
   QUESTIONS_TEXT="$(extract_questions_from_tool_input)"
   if [ -n "$QUESTIONS_TEXT" ] && [ "$QUESTIONS_TEXT" != "null" ]; then
@@ -209,11 +235,64 @@ if [ "$EVENT" = "PermissionRequest" ]; then
   fi
 fi
 
+# 1d. Antigravity: el payload usa camelCase y no trae hook_event_name ni
+#     last_assistant_message; Stop se lee del transcript y PreToolUse de la
+#     llamada a ask_question / ask_permission.
+if [ "$SOURCE" = "antigravity" ]; then
+  if [ "$EVENT" = "PreToolUse" ]; then
+    MESSAGE="$(printf '%s' "$INPUT" | jq -r '
+      (.toolCall.args // {}) as $args
+      | (.toolCall.name // "") as $name
+      | if $name == "ask_question" then
+          ($args.questions // [])
+          | map(
+              ((.question // "") | tostring) as $q
+              | ((.options // []) | map(
+                   (if type == "string" then . else (.label // .title // .value // "") end)
+                   | tostring
+                   | sub("^\\s*\\((Recommended|Recomendado)\\)\\s*"; "")
+                   | sub("^\\s+|\\s+$"; "")
+                 ) | map(select(length > 0))) as $opts
+              | if ($q | length) == 0 then ""
+                elif ($opts | length) > 0 then "\($q) Opciones: \($opts | join(", "))."
+                else $q end
+            )
+          | map(select(length > 0))
+          | join(" ")
+        elif $name == "ask_permission" then
+          (($args.Reason // $args.reason // "") | tostring | sub("^\\s+|\\s+$"; ""))
+          | if length > 0 then . else "¿Me permites continuar con esta acción?" end
+        else "" end
+    ' 2>/dev/null || true)"
+  else
+    ERROR_TEXT="$(printf '%s' "$INPUT" | jq -r '.error // empty' 2>/dev/null)"
+    if [ -z "$ERROR_TEXT" ] && { [ -z "$MESSAGE" ] || [ "$MESSAGE" = "null" ]; }; then
+      AGY_TRANSCRIPT="$(printf '%s' "$INPUT" | jq -r '.transcriptPath // empty' 2>/dev/null)"
+      if [ -n "$AGY_TRANSCRIPT" ] && [ -f "$AGY_TRANSCRIPT" ]; then
+        for _ in 1 2 3; do
+          MESSAGE="$(tail -n 200 "$AGY_TRANSCRIPT" 2>/dev/null | jq -rs '
+            [ .[] | select(.source == "MODEL" and .type == "PLANNER_RESPONSE") ]
+            | last
+            | if . != null and (.content | type) == "string" then .content else "" end
+          ' 2>/dev/null || true)"
+          if [ -n "$MESSAGE" ] && [ "$MESSAGE" != "null" ]; then
+            break
+          fi
+          sleep 0.15
+        done
+      fi
+    fi
+  fi
+fi
+
 # 2. Si viene vacío en Stop, extraer el último mensaje de assistant desde transcript_path (Claude Code o Codex JSONL)
 if [ -z "$MESSAGE" ] || [ "$MESSAGE" = "null" ]; then
   TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)"
   if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
-    SOURCE="$(detect_source_from_transcript "$TRANSCRIPT_PATH")"
+    if [ -z "$SOURCE" ]; then
+      SOURCE="$(detect_source_from_transcript "$TRANSCRIPT_PATH")"
+      [ -n "$SOURCE" ] || SOURCE="codex"
+    fi
     for _ in 1 2 3; do
       if [ "$SOURCE" = "codex" ]; then
         MESSAGE="$(tail -n 200 "$TRANSCRIPT_PATH" 2>/dev/null | jq -rs '
@@ -244,10 +323,10 @@ fi
 if [ -z "$MESSAGE" ] || [ "$MESSAGE" = "null" ]; then
   # A completed turn without speech must not leave the thinking orb visible.
   if [ "$EVENT" = "Stop" ] && [ -f "$SUPPORT/on_turn.sh" ]; then
-    printf '%s' "$INPUT" | jq '.hook_event_name = "Interrupt"' | bash "$SUPPORT/on_turn.sh" >/dev/null 2>&1 || true
+    printf '%s' "$INPUT" | jq '.hook_event_name = "Interrupt"' | bash "$SUPPORT/on_turn.sh" "$SOURCE" >/dev/null 2>&1 || true
   fi
-  log "Stop recibido sin texto de asistente."
-  echo '{}'
+  log "Stop recibido sin texto de asistente (${SOURCE}, ${EVENT})."
+  respond
   exit 0
 fi
 
@@ -310,11 +389,16 @@ if [ -n "$EXTRACTED_FOR_PRISMA" ]; then
   MESSAGE="$EXTRACTED_FOR_PRISMA"
 fi
 
-CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)"
-SESSION="$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)"
+[ -n "$SOURCE" ] || SOURCE="codex"
 
-# Process of the Claude Code window, so the reply reaches the orb of that
-# window (see on_turn.sh). OpenCode replies are matched by their folder.
+CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)"
+[ -n "$CWD" ] || CWD="$(printf '%s' "$INPUT" | jq -r '.workspacePaths[0] // empty' 2>/dev/null)"
+SESSION="$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)"
+[ -n "$SESSION" ] || SESSION="$(printf '%s' "$INPUT" | jq -r '.conversationId // empty' 2>/dev/null)"
+
+# Process of the Claude Code, Muse Code or Antigravity window, so the reply
+# reaches the orb of that window (see on_turn.sh). OpenCode replies are matched
+# by their folder.
 agent_pid() {
   local pid="$PPID" name
   for _ in 1 2 3 4 5; do
@@ -329,9 +413,9 @@ agent_pid() {
   printf '%s' "$pid"
 }
 AGENT_PID=""
-if [ "$SOURCE" = "claude-code" ]; then
-  AGENT_PID="$(agent_pid)"
-fi
+case "$SOURCE" in
+  claude-code|muse|antigravity) AGENT_PID="$(agent_pid)" ;;
+esac
 case "$AGENT_PID" in *[!0-9]*) AGENT_PID="" ;; esac
 
 # 4. Evitar hablar dos veces el mismo texto seguido dentro de la misma sesión
@@ -346,9 +430,9 @@ if [ -f "$DEDUPE_FILE" ]; then
   if [ "$PREV_SIG" = "$SIGNATURE" ] && [ $((NOW_TS - PREV_TS)) -lt 45 ]; then
     log "Aviso duplicado omitido (${SOURCE}, ${EVENT})."
     if [ "$EVENT" = "Stop" ] && [ -f "$SUPPORT/on_turn.sh" ]; then
-      printf '%s' "$INPUT" | jq '.hook_event_name = "Interrupt"' | bash "$SUPPORT/on_turn.sh" >/dev/null 2>&1 || true
+      printf '%s' "$INPUT" | jq '.hook_event_name = "Interrupt"' | bash "$SUPPORT/on_turn.sh" "$SOURCE" >/dev/null 2>&1 || true
     fi
-    echo '{}'
+    respond
     exit 0
   fi
 fi
@@ -424,7 +508,7 @@ fi
 
 if [ -z "$PORT" ]; then
   log "No se pudo obtener el puerto de Prisma."
-  echo '{}'
+  respond
   exit 0
 fi
 
@@ -451,5 +535,5 @@ else
 fi
 
 log "Aviso (${SOURCE}) enviado al puerto ${PORT}."
-echo '{}'
+respond
 exit 0
