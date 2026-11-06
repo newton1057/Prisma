@@ -9,8 +9,8 @@ import time
 import urllib.error
 import urllib.request
 
-VERSION = '1.0.4'
-BUILD = 4
+VERSION = '1.0.5'
+BUILD = 5
 SUPPORT = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'Prisma'
 RUNTIME = SUPPORT / 'runtime.json'
 CODE_BLOCK = re.compile(r'```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`')

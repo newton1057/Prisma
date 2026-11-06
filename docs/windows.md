@@ -12,7 +12,7 @@ This implementation adds a Windows system tray app using Prisma's local protocol
 
 ## Install and update
 
-Download `Prisma-Windows-1.0.4.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm because the script is not signed; choose **More info → Run anyway**. The installer does not need administrator rights. The same release also carries the macOS DMG.
+Download `Prisma-Windows-1.0.5.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm because the script is not signed; choose **More info → Run anyway**. The installer does not need administrator rights. The same release also carries the macOS DMG.
 
 To install from the repository instead, open PowerShell in the repository and run:
 

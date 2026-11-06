@@ -97,9 +97,9 @@ This creates one GitHub release with the macOS DMG and the Windows ZIP, marks it
 
 ### Windows
 
-Download `Prisma-Windows-1.0.4.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm; choose **More info → Run anyway**. The installer needs no administrator rights.
+Download `Prisma-Windows-1.0.5.zip` from [Releases](https://github.com/newton1057/Prisma/releases), extract it, and double-click **Instalar Prisma.cmd**. Windows SmartScreen may ask you to confirm; choose **More info → Run anyway**. The installer needs no administrator rights.
 
-Prisma checks a signed manifest at launch and every six hours and updates itself from **Ajustes → Actualizaciones**. Versions 1.0.2 and earlier must install 1.0.4 by hand once; from that version on, updates arrive on their own. The release flow is the shared one described above, which also publishes the Windows ZIP to the bucket and writes `windows-latest.json` last.
+Prisma checks a signed manifest at launch and every six hours and updates itself from **Ajustes → Actualizaciones**. Versions 1.0.2 and earlier must install 1.0.5 by hand once; from that version on, updates arrive on their own. The release flow is the shared one described above, which also publishes the Windows ZIP to the bucket and writes `windows-latest.json` last.
 
 Alternatively, clone the repository and run the installer in PowerShell:
 
