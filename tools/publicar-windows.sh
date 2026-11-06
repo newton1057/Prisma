@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Signs and publishes the Windows ZIP in the update bucket and on GitHub.
 # Mirrors app/publicar.sh: the manifest is uploaded last so a version is never
-# announced before it can be downloaded, and the Windows release never takes
-# the "Latest" slot from the macOS DMG.
+# announced before it can be downloaded. The newest release, Windows or macOS,
+# holds the single "Latest" slot.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -51,20 +51,15 @@ tag="windows-v$version"
 if gh release view "$tag" -R "$repo" >/dev/null 2>&1; then
     gh release upload "$tag" "$paquete" -R "$repo" --clobber
 elif git rev-parse "$tag" >/dev/null 2>&1; then
-    gh release create "$tag" "$paquete" -R "$repo" --verify-tag --latest=false \
+    gh release create "$tag" "$paquete" -R "$repo" --verify-tag \
         --title "Prisma for Windows $version" --notes "$notas"
 else
-    gh release create "$tag" "$paquete" -R "$repo" --target "$(git rev-parse HEAD)" --latest=false \
+    gh release create "$tag" "$paquete" -R "$repo" --target "$(git rev-parse HEAD)" \
         --title "Prisma for Windows $version" --notes "$notas"
 fi
-# A release that already existed may still have taken Latest.
+# Latest follows the most recently published release, whichever app it is for.
 id=$(gh release view "$tag" -R "$repo" --json databaseId --jq .databaseId)
-gh api -X PATCH "repos/$repo/releases/$id" -f make_latest=false >/dev/null
-mac_tag=$(gh release list -R "$repo" --limit 100 --json tagName --jq '.[].tagName' | grep -E '^v[0-9]' | head -1 || true)
-if [ -n "$mac_tag" ]; then
-    mac_id=$(gh release view "$mac_tag" -R "$repo" --json databaseId --jq .databaseId)
-    gh api -X PATCH "repos/$repo/releases/$mac_id" -f make_latest=true >/dev/null
-fi
+gh api -X PATCH "repos/$repo/releases/$id" -f make_latest=true >/dev/null
 
 gcloud storage cp "$paquete" "gs://$bucket/$archivo" --project="$proyecto"
 gcloud storage cp "$manifiesto" "gs://$bucket/windows-latest.json" --project="$proyecto" \

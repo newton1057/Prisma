@@ -40,7 +40,7 @@ Starting with 1.0.3, Prisma checks for updates at launch and every six hours. It
 
 The update replaces the Python runtime and the staged plugin under `%LOCALAPPDATA%\Prisma`, then reopens Prisma. Settings, the virtual environment, the voice model, and logs are left untouched. If new requirements fail to install, the previous runtime is restored. Installation waits until Prisma finishes speaking; otherwise a retry button appears. A manual **Buscar actualizaciones** reports whether the app is up to date, and **Descargar de GitHub** remains available as a fallback.
 
-The bucket manifest is published by `tools/publicar-windows.sh`, which signs the ZIP, uploads the GitHub release, stores the package under `windows/versiones/<version>/`, and writes `windows-latest.json` last. The Windows release is never marked Latest, so the macOS DMG keeps that slot.
+The bucket manifest is published by `tools/publicar-windows.sh`, which signs the ZIP, uploads the GitHub release, stores the package under `windows/versiones/<version>/`, and writes `windows-latest.json` last. GitHub marks the most recently published release as Latest, so a Windows release holds that slot until the next Windows or macOS release is published.
 
 ## Connect agents from Ajustes
 

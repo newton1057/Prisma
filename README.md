@@ -93,7 +93,7 @@ To publish a version, bump `CFBundleShortVersionString` and `CFBundleVersion` in
 ./app/publicar.sh "What changed in this version"
 ```
 
-This creates the DMG for GitHub and the signed ZIP for the bucket. The signing key lives in the login keychain under **Prisma actualizaciones**. A backup copy is kept at `~/Library/Application Support/Prisma/firma-actualizaciones.txt` with permissions `600`, outside the repository and the app bundle. Restore it on another Mac with `app/.build/release/UpdateSigner restaurar <file>`; without that key no new version can be signed.
+This creates the DMG for GitHub, marks that release Latest, and uploads the signed ZIP for the bucket. The signing key lives in the login keychain under **Prisma actualizaciones**. A backup copy is kept at `~/Library/Application Support/Prisma/firma-actualizaciones.txt` with permissions `600`, outside the repository and the app bundle. Restore it on another Mac with `app/.build/release/UpdateSigner restaurar <file>`; without that key no new version can be signed.
 
 ### Windows
 
@@ -105,7 +105,7 @@ Starting with 1.0.3, Prisma checks a signed manifest at launch and every six hou
 ./tools/publicar-windows.sh "What changed in this version"
 ```
 
-This signs the ZIP with the same key as macOS, publishes the GitHub release without taking the Latest slot, uploads the package to the bucket, and writes `windows-latest.json` last.
+This signs the ZIP with the same key as macOS, publishes the GitHub release and marks it Latest (GitHub keeps only the most recently published release there, Windows or macOS), uploads the package to the bucket, and writes `windows-latest.json` last.
 
 Alternatively, clone the repository and run the installer in PowerShell:
 

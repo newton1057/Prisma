@@ -114,3 +114,4 @@ Check `/health` on the port in `runtime.json`, toggle and adjust **Ajustes → A
 | 2026-11-05 | Windows update checks use `windows-latest.json`, separate from macOS `latest.json` | The two apps have independent build numbers and packages, and neither should announce the other |
 | 2026-11-05 | Windows verifies the Ed25519 signature in pure Python | It avoids a compiled crypto dependency and keeps the check available even if a package install fails |
 | 2026-11-05 | Windows applies updates with a helper that waits for the app to exit | Windows cannot replace modules a running process has open; settings, the venv and the voice model stay in place |
+| 2026-11-05 | The Latest badge follows the most recently published release, Windows or macOS | The user wants the newest release visible on the repository sidebar; GitHub allows only one Latest and each publisher now claims it for its own release |

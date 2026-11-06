@@ -45,6 +45,9 @@ else
     gh release create "v$version" "$dmg" -R "$repo" \
         --target "$(git rev-parse HEAD)" --title "Prisma $version" --notes "$notas"
 fi
+# La release recién publicada reclama el único puesto "Latest".
+id=$(gh release view "v$version" -R "$repo" --json databaseId --jq .databaseId)
+gh api -X PATCH "repos/$repo/releases/$id" -f make_latest=true >/dev/null
 gcloud storage cp "$paquete" "gs://$bucket/$archivo" --project="$proyecto"
 gcloud storage cp "$manifiesto" "gs://$bucket/latest.json" --project="$proyecto" \
     --cache-control=no-store --content-type=application/json
