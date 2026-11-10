@@ -1,4 +1,4 @@
-Prisma para Windows 1.0.5
+Prisma para Windows 1.0.6
 =========================
 
 Prisma lee en voz alta las respuestas de Codex, Claude Code, OpenCode, Muse
@@ -44,7 +44,7 @@ conserva tus ajustes, el entorno y la voz, y vuelve a abrir Prisma.
 
 Si tienes 1.0.2 o anterior, instala esta versión una vez a mano: cierra
 Prisma y ejecuta el instalador nuevo. Los que ya tengan una versión con
-actualizador (1.0.3 o posterior) recibirán la 1.0.5 desde Ajustes, sin hacer
+actualizador (1.0.3 o posterior) recibirán la 1.0.6 desde Ajustes, sin hacer
 nada.
 
 También puedes usar "Buscar actualizaciones" en Ajustes o en la bandeja. Si

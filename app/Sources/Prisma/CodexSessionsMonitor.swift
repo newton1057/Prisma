@@ -1,8 +1,41 @@
+import Darwin
 import Foundation
 
 /// Identifies interactive `codex resume` clients, including sessions that were
 /// already open when Prisma started. No conversation contents are inspected.
 enum CodexSessionsMonitor {
+    private static func defaultCodexHome() -> URL {
+        let custom = ProcessInfo.processInfo.environment["CODEX_HOME"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let custom, !custom.isEmpty {
+            return URL(fileURLWithPath: custom, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex", isDirectory: true)
+    }
+
+    /// Returns whether Codex currently holds an exclusive writer lock on
+    /// `<codexHome>/thread-writer-locks/<id>.lock`, or `nil` when `id` is not
+    /// a session UUID or the lock directory does not exist.
+    static func isSessionLocked(_ id: String, codexHome: URL? = nil) -> Bool? {
+        guard let uuid = UUID(uuidString: id)?.uuidString.lowercased() else { return nil }
+        let home = codexHome ?? defaultCodexHome()
+        let locksDir = home.appendingPathComponent("thread-writer-locks", isDirectory: true)
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: locksDir.path, isDirectory: &isDir),
+              isDir.boolValue else {
+            return nil
+        }
+        let lockFile = locksDir.appendingPathComponent("\(uuid).lock")
+        let fd = open(lockFile.path, O_RDONLY)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        if flock(fd, LOCK_SH | LOCK_NB) == 0 {
+            _ = flock(fd, LOCK_UN)
+            return false
+        }
+        return errno == EWOULDBLOCK || errno == EAGAIN
+    }
     static func resumedSessions(in processList: String) -> [String] {
         var seen = Set<String>()
         var sessions: [String] = []

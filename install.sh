@@ -49,6 +49,8 @@ cp "$PROJECT_ROOT/plugin/scripts/on_stop.sh" "$SUPPORT/scripts/on_stop.sh"
 chmod +x "$SUPPORT/scripts/on_stop.sh"
 cp "$PROJECT_ROOT/plugin/scripts/on_turn.sh" "$SUPPORT/on_turn.sh"
 chmod +x "$SUPPORT/on_turn.sh"
+cp "$PROJECT_ROOT/plugin/scripts/on_turn.sh" "$SUPPORT/scripts/on_turn.sh"
+chmod +x "$SUPPORT/scripts/on_turn.sh"
 
 mkdir -p "$CODEX_HOME"
 CODEX_AGENTS_FILE="$CODEX_HOME/AGENTS.md"

@@ -162,6 +162,7 @@ final class SpeechController {
     private var appleSynth: AVSpeechSynthesizer?
     private var appleDelegate: AppleSpeechDelegate?
     private var appleMeterTimer: Timer?
+    private var appleWatchdog: DispatchWorkItem?
     private var lastSignature: String?
     private var lastSignatureTime: Date?
     var onFinish: (() -> Void)?
@@ -374,8 +375,11 @@ final class SpeechController {
     private func stopInternal(restoreDuck: Bool) {
         session?.cancel()
         session = nil
+        appleWatchdog?.cancel()
+        appleWatchdog = nil
         appleMeterTimer?.invalidate()
         appleMeterTimer = nil
+        appleSynth?.delegate = nil
         appleSynth?.stopSpeaking(at: .immediate)
         appleSynth = nil
         appleDelegate = nil
@@ -389,8 +393,13 @@ final class SpeechController {
 
     private func finish() {
         session = nil
+        appleWatchdog?.cancel()
+        appleWatchdog = nil
         appleMeterTimer?.invalidate()
         appleMeterTimer = nil
+        appleSynth?.delegate = nil
+        appleSynth = nil
+        appleDelegate = nil
         ducker.restore()
         overlay.setProgress(1)
         overlay.setAudioLevel(0)
@@ -424,6 +433,15 @@ final class SpeechController {
         utterance.volume = 1.0
         synth.speak(utterance)
 
+        appleWatchdog?.cancel()
+        let maxDuration = max(10.0, Double(text.count) * 0.15 + 6.0)
+        let watchdog = DispatchWorkItem { [weak self, weak synth] in
+            guard let self, let synth, self.appleSynth === synth else { return }
+            self.finish()
+        }
+        appleWatchdog = watchdog
+        DispatchQueue.main.asyncAfter(deadline: .now() + maxDuration, execute: watchdog)
+
         appleMeterTimer?.invalidate()
         appleMeterTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -435,14 +453,25 @@ final class SpeechController {
 }
 
 final class AppleSpeechDelegate: NSObject, AVSpeechSynthesizerDelegate {
+    private var didComplete = false
     private let onFinish: () -> Void
 
     init(onFinish: @escaping () -> Void) {
         self.onFinish = onFinish
     }
 
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+    private func completeOnce() {
+        guard !didComplete else { return }
+        didComplete = true
         onFinish()
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        completeOnce()
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        completeOnce()
     }
 }
 
@@ -466,11 +495,13 @@ final class SpeechSession: NSObject {
     private let synthesisQueue = DispatchQueue(label: "Prisma.Synthesis", qos: .userInitiated)
     private var audioURLs: [Int: URL] = [:]
     private var synthesizing: Set<Int> = []
+    private var retriedChunks: Set<Int> = []
     private var currentIndex = 0
     private var isPlaying = false
     private var didStartPlayback = false
     private var isCancelled = false
     private var didFinish = false
+    private var playbackGeneration: UInt64 = 0
 
     private let engine = AVAudioEngine()
     private let limiter: AVAudioUnitEffect
@@ -478,6 +509,9 @@ final class SpeechSession: NSObject {
     private var pendingNode: AVAudioPlayerNode?
     private var currentFile: AVAudioFile?
     private var playbackWorkItem: DispatchWorkItem?
+    private var playbackWatchdog: DispatchWorkItem?
+    private var routeRetryWorkItem: DispatchWorkItem?
+    private var configChangeObserver: NSObjectProtocol?
     private var graphReady = false
     private var meterTapInstalled = false
     private var lastMeterDispatch: CFTimeInterval = 0
@@ -513,11 +547,18 @@ final class SpeechSession: NSObject {
         super.init()
     }
 
+    deinit {
+        if let observer = configChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
     func start() {
         guard !chunks.isEmpty else {
             onFinish()
             return
         }
+        installConfigChangeObserver()
         synthesize(0)
         if chunks.count > 1 {
             synthesize(1)
@@ -529,6 +570,49 @@ final class SpeechSession: NSObject {
         isPlaying = false
         teardownEngine()
         cleanupFiles()
+    }
+
+    private func failSession(started: Bool) {
+        guard !isCancelled, !didFinish else { return }
+        isCancelled = true
+        isPlaying = false
+        teardownEngine()
+        cleanupFiles()
+        onError(started)
+    }
+
+    /// When Bluetooth/HDMI output devices connect or disconnect mid-sentence,
+    /// `AVAudioEngine` stops itself and `.dataPlayedBack` never fires. Rebuild
+    /// the graph on the new route once, or advance cleanly so speech never hangs.
+    private func installConfigChangeObserver() {
+        guard configChangeObserver == nil else { return }
+        configChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self, !self.isCancelled, !self.didFinish else { return }
+            let activeOrPending = self.isPlaying || self.pendingNode != nil
+            self.playbackGeneration &+= 1
+            self.isPlaying = false
+            self.resetAudioGraph()
+            guard activeOrPending else { return }
+
+            let index = self.currentIndex
+            if index < self.chunks.count,
+               self.audioURLs[index] != nil,
+               self.retriedChunks.insert(index).inserted {
+                let retry = DispatchWorkItem { [weak self] in
+                    guard let self, !self.isCancelled, !self.didFinish,
+                          !self.isPlaying, self.currentIndex == index else { return }
+                    self.play(index)
+                }
+                self.routeRetryWorkItem = retry
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: retry)
+            } else {
+                self.advanceAfterChunk(index)
+            }
+        }
     }
 
     private func synthesize(_ index: Int) {
@@ -555,19 +639,9 @@ final class SpeechSession: NSObject {
                     self.synthesizing.remove(indexCopy)
                     guard !self.isCancelled else { return }
                     if !self.didStartPlayback && indexCopy == 0 {
-                        self.onError(false)
+                        self.failSession(started: false)
                     } else if self.currentIndex == indexCopy && !self.isPlaying {
-                        let next = indexCopy + 1
-                        if next < self.chunks.count {
-                            self.currentIndex = next
-                            if self.audioURLs[next] != nil {
-                                self.play(next)
-                            } else {
-                                self.synthesize(next)
-                            }
-                        } else {
-                            self.finishIfNeeded()
-                        }
+                        self.advanceAfterChunk(indexCopy)
                     }
                 }
             }
@@ -575,7 +649,7 @@ final class SpeechSession: NSObject {
     }
 
     private func play(_ index: Int) {
-        guard !isCancelled, let url = audioURLs[index] else { return }
+        guard !isCancelled, !didFinish, let url = audioURLs[index] else { return }
         do {
             let file = try AVAudioFile(forReading: url)
             let format = file.processingFormat
@@ -617,21 +691,41 @@ final class SpeechSession: NSObject {
                 beginPlayback(node: node, file: file, index: index)
             }
         } catch {
-            onError(didStartPlayback)
+            resetAudioGraph()
+            failSession(started: didStartPlayback)
         }
     }
 
     private func beginPlayback(node: AVAudioPlayerNode, file: AVAudioFile, index: Int) {
-        guard !isCancelled, !isPlaying, !didFinish, node.engine != nil else {
+        guard !isCancelled, !isPlaying, !didFinish else {
             detach(node: node)
+            return
+        }
+        guard node.engine != nil else {
+            failSession(started: didStartPlayback)
             return
         }
         pendingNode = nil
         playbackWorkItem = nil
 
+        if !engine.isRunning {
+            do {
+                try engine.start()
+            } catch {
+                detach(node: node)
+                resetAudioGraph()
+                failSession(started: didStartPlayback)
+                return
+            }
+        }
+
+        playbackGeneration &+= 1
+        let generation = playbackGeneration
+
         node.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             DispatchQueue.main.async {
-                self?.chunkFinished(index)
+                guard let self, self.playbackGeneration == generation else { return }
+                self.chunkFinished(index)
             }
         }
         node.play()
@@ -642,6 +736,18 @@ final class SpeechSession: NSObject {
         currentIndex = index
         didStartPlayback = true
         duckKeepAlive()
+
+        // Watchdog in case an output driver accepts `play()` without ever
+        // rendering frames or firing `.dataPlayedBack`.
+        playbackWatchdog?.cancel()
+        let duration = Double(file.length) / max(1.0, file.processingFormat.sampleRate)
+        let watchdog = DispatchWorkItem { [weak self] in
+            guard let self, !self.isCancelled, !self.didFinish,
+                  self.playbackGeneration == generation, self.isPlaying else { return }
+            self.chunkFinished(index)
+        }
+        playbackWatchdog = watchdog
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(4.0, duration + 3.5), execute: watchdog)
 
         let progress = Double(index) / Double(max(1, chunks.count))
         overlay?.setProgress(progress)
@@ -724,12 +830,18 @@ final class SpeechSession: NSObject {
     }
 
     private func chunkFinished(_ index: Int) {
-        guard !isCancelled, currentIndex == index else { return }
+        guard !isCancelled, !didFinish, currentIndex == index else { return }
+        playbackWatchdog?.cancel()
+        playbackWatchdog = nil
         isPlaying = false
         detachPlayerNode()
         smoothedLevel = 0
         overlay?.setAudioLevel(0)
+        advanceAfterChunk(index)
+    }
 
+    private func advanceAfterChunk(_ index: Int) {
+        guard !isCancelled, !didFinish else { return }
         let next = index + 1
         if next < chunks.count {
             // Advance currentIndex BEFORE checking audioURLs[next] so if `next` is still
@@ -759,18 +871,35 @@ final class SpeechSession: NSObject {
         engine.detach(node)
     }
 
-    private func teardownEngine() {
+    private func resetAudioGraph() {
+        routeRetryWorkItem?.cancel()
+        routeRetryWorkItem = nil
         playbackWorkItem?.cancel()
         playbackWorkItem = nil
+        playbackWatchdog?.cancel()
+        playbackWatchdog = nil
         if let pending = pendingNode {
             detach(node: pending)
             pendingNode = nil
         }
         stopMetering()
         detachPlayerNode()
+        if limiter.engine != nil {
+            engine.disconnectNodeOutput(limiter)
+            engine.detach(limiter)
+        }
         if engine.isRunning {
             engine.stop()
         }
+        graphReady = false
+    }
+
+    private func teardownEngine() {
+        if let observer = configChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            configChangeObserver = nil
+        }
+        resetAudioGraph()
     }
 
     private func cleanupFiles() {
@@ -780,6 +909,27 @@ final class SpeechSession: NSObject {
         for file in files where file.lastPathComponent.hasPrefix(prefix) {
             try? fm.removeItem(at: file)
         }
+    }
+
+    private func waitForProcess(_ process: Process, timeout: TimeInterval = 25) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while process.isRunning && !isCancelled && Date() < deadline {
+            usleep(25_000)
+        }
+        if process.isRunning {
+            process.terminate()
+            let grace = Date().addingTimeInterval(0.5)
+            while process.isRunning && Date() < grace {
+                usleep(20_000)
+            }
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+            }
+            process.waitUntilExit()
+            return false
+        }
+        process.waitUntilExit()
+        return true
     }
 
     private func synthesizeChunk(text: String, index: Int) throws -> URL {
@@ -799,6 +949,7 @@ final class SpeechSession: NSObject {
         var lastError: Error?
         for _ in 0..<2 {
             guard !isCancelled else { break }
+            try? FileManager.default.removeItem(at: output)
             let process = Process()
             process.executableURL = URL(fileURLWithPath: python)
             process.arguments = [
@@ -811,25 +962,30 @@ final class SpeechSession: NSObject {
 
             let stderrPipe = Pipe()
             process.standardError = stderrPipe
-            process.standardOutput = Pipe()
+            process.standardOutput = FileHandle.nullDevice
 
             do {
                 try process.run()
-                process.waitUntilExit()
-                if process.terminationStatus == 0,
+                let finishedInTime = waitForProcess(process, timeout: 25)
+                if finishedInTime,
+                   process.terminationStatus == 0,
                    let attrs = try? FileManager.default.attributesOfItem(atPath: output.path),
                    let size = attrs[.size] as? NSNumber,
                    size.intValue > 0 {
                     return output
                 }
+                try? FileManager.default.removeItem(at: output)
                 let data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                let message = String(data: data, encoding: .utf8) ?? "edge-tts no pudo sintetizar."
+                let message = finishedInTime
+                    ? (String(data: data, encoding: .utf8) ?? "edge-tts no pudo sintetizar.")
+                    : "edge-tts agotó el tiempo de espera."
                 lastError = NSError(
                     domain: "Prisma.EdgeTTS",
                     code: Int(process.terminationStatus),
                     userInfo: [NSLocalizedDescriptionKey: message]
                 )
             } catch {
+                try? FileManager.default.removeItem(at: output)
                 lastError = error
             }
         }
@@ -856,18 +1012,24 @@ final class SpeechSession: NSObject {
         let stderrPipe = Pipe()
         process.standardInput = stdinPipe
         process.standardError = stderrPipe
-        process.standardOutput = Pipe()
+        process.standardOutput = FileHandle.nullDevice
 
         try process.run()
         if let data = text.data(using: .utf8) {
             stdinPipe.fileHandleForWriting.write(data)
         }
         try? stdinPipe.fileHandleForWriting.close()
-        process.waitUntilExit()
+        let finishedInTime = waitForProcess(process, timeout: 25)
 
-        guard process.terminationStatus == 0, FileManager.default.fileExists(atPath: output.path) else {
+        guard finishedInTime, process.terminationStatus == 0,
+              let attrs = try? FileManager.default.attributesOfItem(atPath: output.path),
+              let size = attrs[.size] as? NSNumber,
+              size.intValue > 0 else {
+            try? FileManager.default.removeItem(at: output)
             let data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            let message = String(data: data, encoding: .utf8) ?? "Piper no pudo sintetizar."
+            let message = finishedInTime
+                ? (String(data: data, encoding: .utf8) ?? "Piper no pudo sintetizar.")
+                : "Piper agotó el tiempo de espera."
             throw NSError(
                 domain: "Prisma.Piper",
                 code: Int(process.terminationStatus),

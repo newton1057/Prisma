@@ -85,6 +85,24 @@ printf '%s' '{"app":"Prisma"}'
                        'session_id': 'claude-session', 'tool_input': {}})
         self.assertEqual(self.messages()[0]['text'], '¿Me permites ejecutar este comando en la terminal?')
 
+    def test_large_codex_transcript_is_not_misclassified_as_claude(self):
+        transcript = Path(self.temp.name) / 'rollout-large.jsonl'
+        huge_padding = 'x' * 120_000
+        transcript.write_text(
+            f'{{"type":"session_meta","padding":"{huge_padding}"}}\n'
+            + (f'{{"type":"model","padding":"{huge_padding}"}}\n' * 4)
+        )
+        self.run_hook({
+            'hook_event_name': 'Stop',
+            'session_id': '01a1b6a2-9b01-7c02-8de1-98b9f34061c9',
+            'transcript_path': str(transcript),
+            'last_assistant_message': 'Listo.\n\n<ForPrisma>\nTodo quedó corregido.\n</ForPrisma>',
+        })
+        message = self.messages()[0]
+        self.assertEqual(message['source'], 'codex')
+        self.assertEqual(message['text'], 'Todo quedó corregido.')
+        self.assertNotIn('pid', message)
+
 
 if __name__ == '__main__':
     unittest.main()

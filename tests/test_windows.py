@@ -669,4 +669,49 @@ class UpdateTests(unittest.TestCase):
         self.assertGreaterEqual(common.BUILD, 1)
 
 
+class SpeechWatchdogTests(unittest.TestCase):
+    def test_run_process_times_out_instead_of_hanging(self):
+        speech = app.Speech(queue.Queue())
+        cancel = threading.Event()
+        ok = speech.run_process([sys.executable, '-c', 'import time; time.sleep(10)'], cancel, timeout=1.0)
+        self.assertFalse(ok)
+
+    def test_play_file_recovers_after_audio_device_reset(self):
+        calls = []
+
+        class FakeMusic:
+            def __init__(self):
+                self.failed_once = False
+                self.busy_checks = 0
+            def load(self, path):
+                calls.append(('load', path))
+                if not self.failed_once:
+                    self.failed_once = True
+                    raise RuntimeError('DirectSound device lost')
+            def play(self):
+                calls.append(('play',))
+            def get_busy(self):
+                self.busy_checks += 1
+                return self.busy_checks < 2
+            def stop(self):
+                calls.append(('stop',))
+            def unload(self):
+                calls.append(('unload',))
+
+        class FakeMixer:
+            music = FakeMusic()
+            def get_init(self): return True
+            def quit(self): calls.append(('quit',))
+            def init(self): calls.append(('init',))
+
+        class FakePygame:
+            mixer = FakeMixer()
+
+        speech = app.Speech(queue.Queue())
+        ducker = app.Ducker()
+        speech.play_file(FakePygame(), 'voice.mp3', ducker, {'duckAudio': False, 'duckLevel': 0.35},
+                         threading.Event(), max_seconds=10.0)
+        self.assertEqual([c[0] for c in calls], ['load', 'quit', 'init', 'load', 'play', 'stop', 'unload'])
+
+
 if __name__ == '__main__': unittest.main()

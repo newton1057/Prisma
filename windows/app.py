@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk
 import webbrowser
@@ -126,13 +127,14 @@ class Speech:
         serial = self.serial
         self.thread = threading.Thread(target=self.run, args=(payload, settings.copy(), self.cancel, serial), daemon=True)
         self.thread.start()
-    def run_process(self, args, cancel, input_text=None):
+    def run_process(self, args, cancel, input_text=None, timeout=30.0):
         proc = subprocess.Popen(args, stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=NO_WINDOW, env={**os.environ, 'PYTHONUTF8': '1'})
         if input_text is not None:
             try: proc.stdin.write(input_text.encode('utf-8')); proc.stdin.close()
             except (BrokenPipeError, OSError): pass
+        deadline = time.monotonic() + max(1.0, float(timeout))
         while proc.poll() is None:
-            if cancel.wait(.05):
+            if cancel.wait(.05) or time.monotonic() >= deadline:
                 proc.kill(); proc.wait(); return False
         return proc.returncode == 0
     def run(self, payload, settings, cancel, serial):
@@ -156,32 +158,51 @@ class Speech:
                     if self.play_backend(backend, text, voice, speed, settings, cancel): break
                 except Exception: logging.exception('Falló el motor %s', backend)
         finally: self.events.put(('hide', serial))
+    def play_file(self, pygame, output, ducker, settings, cancel, max_seconds):
+        try:
+            if not pygame.mixer.get_init(): pygame.mixer.init()
+            pygame.mixer.music.load(output)
+            if settings['duckAudio']: ducker.duck(settings['duckLevel'])
+            pygame.mixer.music.play()
+        except Exception:
+            # Output device changed (e.g. Bluetooth/HDMI disconnect): reopen mixer once.
+            try: pygame.mixer.quit()
+            except Exception: pass
+            pygame.mixer.init()
+            pygame.mixer.music.load(output)
+            if settings['duckAudio'] and not ducker.sessions: ducker.duck(settings['duckLevel'])
+            pygame.mixer.music.play()
+        deadline = time.monotonic() + max(10.0, float(max_seconds))
+        try:
+            while pygame.mixer.music.get_busy() and not cancel.wait(.05):
+                if time.monotonic() >= deadline: break
+        finally:
+            try: pygame.mixer.music.stop()
+            except Exception: pass
+            try: pygame.mixer.music.unload()
+            except Exception: pass
     def play_backend(self, backend, text, voice, speed, settings, cancel):
         ducker = Ducker()
+        max_seconds = max(15.0, len(text) * 0.25 + 10.0)
         try:
             if backend == 'windows':
                 if settings['duckAudio']: ducker.duck(max(.65, float(settings['duckLevel'])))
                 rate = round((speed - 1) * 10)
                 script = '[Console]::InputEncoding=[Text.Encoding]::UTF8; Add-Type -AssemblyName System.Speech; $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate=' + str(rate) + '; $s.Speak([Console]::In.ReadToEnd())'
-                return self.run_process(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script], cancel, text)
+                return self.run_process(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script], cancel, text, timeout=max_seconds)
             if backend == 'piper' and not MODEL.exists(): return False
             with tempfile.TemporaryDirectory(prefix='prisma-') as tmp:
                 output = str(Path(tmp) / ('voice.mp3' if backend == 'edge' else 'voice.wav'))
                 if backend == 'edge':
                     args = [sys.executable, '-m', 'edge_tts', '--voice', str(voice), f'--rate={round((speed-1)*100):+d}%', '--text', text, '--write-media', output]
-                    ok = self.run_process(args, cancel)
+                    ok = self.run_process(args, cancel, timeout=30.0)
                 else:
                     args = [sys.executable, '-m', 'piper', '--model', str(MODEL), '--output_file', output, '--length_scale', str(1/speed)]
-                    ok = self.run_process(args, cancel, text)
-                if not ok or cancel.is_set(): return False
+                    ok = self.run_process(args, cancel, text, timeout=30.0)
+                if not ok or cancel.is_set() or not Path(output).is_file() or Path(output).stat().st_size <= 0:
+                    return False
                 import pygame
-                if not pygame.mixer.get_init(): pygame.mixer.init()
-                pygame.mixer.music.load(output)
-                if settings['duckAudio']: ducker.duck(settings['duckLevel'])
-                pygame.mixer.music.play()
-                while pygame.mixer.music.get_busy() and not cancel.wait(.05): pass
-                pygame.mixer.music.stop()
-                pygame.mixer.music.unload()
+                self.play_file(pygame, output, ducker, settings, cancel, max_seconds)
                 return not cancel.is_set()
         finally: ducker.restore()
 

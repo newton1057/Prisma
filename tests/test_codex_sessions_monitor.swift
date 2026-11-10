@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 @main
@@ -18,6 +19,36 @@ struct TestCodexSessionsMonitor {
         precondition(actual == [one, two], "Unexpected sessions: \(actual)")
         let pids = CodexSessionsMonitor.resumedSessionPIDs(in: processes)
         precondition(pids == [one: 100, two: 102], "Unexpected session PIDs: \(pids)")
+
+        let fm = FileManager.default
+        let tempCodex = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("codex-locks-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: tempCodex) }
+
+        precondition(CodexSessionsMonitor.isSessionLocked(one, codexHome: tempCodex) == nil,
+                     "Without thread-writer-locks directory, lock check must return nil")
+
+        let locksDir = tempCodex.appendingPathComponent("thread-writer-locks", isDirectory: true)
+        try! fm.createDirectory(at: locksDir, withIntermediateDirectories: true)
+        precondition(CodexSessionsMonitor.isSessionLocked("not-a-uuid", codexHome: tempCodex) == nil,
+                     "Non-UUID session ids must return nil")
+        precondition(CodexSessionsMonitor.isSessionLocked(one, codexHome: tempCodex) == false,
+                     "Missing lock file must report unlocked")
+
+        let lockFile = locksDir.appendingPathComponent("\(one).lock")
+        fm.createFile(atPath: lockFile.path, contents: Data())
+        precondition(CodexSessionsMonitor.isSessionLocked(one, codexHome: tempCodex) == false,
+                     "Unlocked file must report unlocked")
+
+        let fd = open(lockFile.path, O_RDWR)
+        precondition(fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) == 0, "Failed to acquire test lock")
+        precondition(CodexSessionsMonitor.isSessionLocked(one, codexHome: tempCodex) == true,
+                     "Exclusively locked file must report locked")
+        _ = flock(fd, LOCK_UN)
+        close(fd)
+        precondition(CodexSessionsMonitor.isSessionLocked(one, codexHome: tempCodex) == false,
+                     "Released lock must report unlocked")
+
         print("Resumed Codex session detection passed")
     }
 }

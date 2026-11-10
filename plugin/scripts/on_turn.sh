@@ -13,9 +13,17 @@ EVENT="$(field '.hook_event_name')"
 [ -n "$EVENT" ] || EVENT="${2:-}"
 TRANSCRIPT="$(field '.transcript_path')"
 [ -n "$TRANSCRIPT" ] || TRANSCRIPT="$(field '.transcriptPath')"
+
+is_codex_transcript() {
+  local path="$1"
+  case "$0" in */.codex/plugins/*) return 0 ;; esac
+  case "$path" in */.codex/sessions/*) return 0 ;; esac
+  [ -n "$path" ] && [ -f "$path" ] && { head -n 5 "$path" 2>/dev/null || true; } | grep -q '"type":"session_meta"'
+}
+
 # A Codex transcript identifies Codex even through an older or shared hook.
 # Older Claude Code hooks pass no argument; their transcript identifies them.
-if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ] && head -n 5 "$TRANSCRIPT" 2>/dev/null | grep -q '"type":"session_meta"'; then
+if is_codex_transcript "$TRANSCRIPT"; then
   SOURCE=codex
 elif [ -z "$SOURCE" ] && [ -n "$TRANSCRIPT" ]; then
   SOURCE=claude-code

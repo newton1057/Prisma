@@ -48,15 +48,25 @@ respond() {
 MESSAGE="$(printf '%s' "$INPUT" | jq -r '.last_assistant_message // empty' 2>/dev/null)"
 SOURCE="$SOURCE_HINT"
 [ -n "$SOURCE" ] || SOURCE="$(printf '%s' "$INPUT" | jq -r '.source // empty' 2>/dev/null)"
+if [ -z "$SOURCE" ]; then
+  case "$0" in */.codex/plugins/*) SOURCE=codex ;; esac
+fi
+
+is_codex_transcript() {
+  local path="$1"
+  case "$0" in */.codex/plugins/*) return 0 ;; esac
+  case "$path" in */.codex/sessions/*) return 0 ;; esac
+  [ -n "$path" ] && [ -f "$path" ] && { head -n 5 "$path" 2>/dev/null || true; } | grep -q '"type":"session_meta"'
+}
 
 detect_source_from_transcript() {
   local path="$1"
+  if is_codex_transcript "$path"; then
+    printf 'codex'
+    return 0
+  fi
   if [ -n "$path" ] && [ -f "$path" ]; then
-    if head -n 5 "$path" 2>/dev/null | grep -q '"type":"session_meta"'; then
-      printf 'codex'
-    else
-      printf 'claude-code'
-    fi
+    printf 'claude-code'
     return 0
   fi
   printf '%s' "$SOURCE"
@@ -78,7 +88,7 @@ recent_question_forprisma_text() {
   [ -f "$path" ] || return 0
 
   local text=""
-  if head -n 5 "$path" 2>/dev/null | grep -q '"type":"session_meta"'; then
+  if is_codex_transcript "$path"; then
     # Codex: only take the last relevant response_item when it is an assistant message
     text="$(tail -n 60 "$path" 2>/dev/null | jq -rs '
       [ .[]
@@ -106,7 +116,7 @@ recent_question_forprisma_text() {
     ' 2>/dev/null || true)"
   fi
 
-  if [ -n "$text" ] && printf '%s' "$text" | grep -qiE '<\s*ForPri(s)?ma\s*>' && printf '%s' "$text" | grep -qE '[?¿]'; then
+  if [ -n "$text" ] && { printf '%s' "$text" || true; } | grep -qiE '<\s*ForPri(s)?ma\s*>' && { printf '%s' "$text" || true; } | grep -qE '[?¿]'; then
     printf '%s' "$text"
   fi
 }

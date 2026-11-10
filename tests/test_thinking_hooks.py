@@ -93,9 +93,14 @@ class ThinkingHookTests(unittest.TestCase):
         self.assertEqual(self.endpoints(), ['session/start', 'thinking', 'interrupt', 'session/end'])
         for payload in self.payloads():
             self.assertEqual(payload, {'session_id': 'codex-session', 'source': 'codex'})
-        # A Codex transcript identifies Codex even through an older or shared hook.
+        # A Codex transcript identifies Codex even through an older or shared hook,
+        # including large transcripts (>64 KB in the first lines) under `set -o pipefail`.
         transcript = self.home / 'codex.jsonl'
-        transcript.write_text('{"type":"session_meta"}\n')
+        huge_padding = 'x' * 120_000
+        transcript.write_text(
+            f'{{"type":"session_meta","padding":"{huge_padding}"}}\n'
+            + (f'{{"type":"model","padding":"{huge_padding}"}}\n' * 4)
+        )
         self.run_turn({'hook_event_name': 'UserPromptSubmit', 'session_id': 'codex-session',
                        'transcript_path': str(transcript)}, 'claude-code')
         self.assertEqual(self.payloads()[-1], {'session_id': 'codex-session', 'source': 'codex'})
