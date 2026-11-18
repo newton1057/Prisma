@@ -310,6 +310,12 @@ final class SettingsStore: ObservableObject {
         didSet { defaults.set(stayVisible, forKey: Keys.stayVisible) }
     }
 
+    /// Waiting orbs let their light come to rest after a few seconds and stop
+    /// redrawing; they wake up when hovered, thinking or speaking.
+    @Published var restIdleOrbs: Bool {
+        didSet { defaults.set(restIdleOrbs, forKey: Keys.restIdleOrbs) }
+    }
+
     @Published var duckAudio: Bool {
         didSet { defaults.set(duckAudio, forKey: Keys.duckAudio) }
     }
@@ -346,6 +352,7 @@ final class SettingsStore: ObservableObject {
         static let showThinking = "showThinking"
         static let showHoverInfo = "showHoverInfo"
         static let stayVisible = "stayVisible"
+        static let restIdleOrbs = "restIdleOrbs"
         static let duckAudio = "duckAudio"
         static let duckLevel = "duckLevel"
         static let piperModelPath = "piperModelPath"
@@ -377,6 +384,7 @@ final class SettingsStore: ObservableObject {
         showThinking = defaults.object(forKey: Keys.showThinking) as? Bool ?? true
         showHoverInfo = defaults.object(forKey: Keys.showHoverInfo) as? Bool ?? true
         stayVisible = defaults.object(forKey: Keys.stayVisible) as? Bool ?? true
+        restIdleOrbs = defaults.object(forKey: Keys.restIdleOrbs) as? Bool ?? true
         duckAudio = defaults.object(forKey: Keys.duckAudio) as? Bool ?? true
         duckLevel = defaults.object(forKey: Keys.duckLevel) as? Double ?? 0.35
         piperModelPath = defaults.string(forKey: Keys.piperModelPath) ?? ""

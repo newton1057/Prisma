@@ -46,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var closingSessions: Set<String> = []
     private var resumedSessions: Set<String> = []
     private var sessionMonitor: DispatchSourceTimer?
+    private var sessionMonitorGeneration = 0
     /// Agents whose sessions get their own persistent orb in the row.
     private let sessionSources: Set<String> = ["codex", "claude-code", "opencode", "muse", "antigravity"]
     /// Agent process behind each Claude Code and OpenCode orb, so the orb
@@ -56,25 +57,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Ends wait a moment in case the same window continues (/clear, /resume).
     private var pendingEnds: [String: DispatchWorkItem] = [:]
     /// Claude Code transcripts watched while thinking: it has no interrupt hook.
-    private var thinkingTranscripts: [String: (path: String, offset: UInt64)] = [:]
+    private var thinkingTranscripts: [String: TranscriptWatch] = [:]
+    private var transcriptGeneration: UInt64 = 0
+    private var transcriptReadInFlight = false
+    private let transcriptQueue = DispatchQueue(label: "Prisma.Transcripts", qos: .utility)
     /// Open OpenCode windows (process → folder) and the orbs that belong to OpenCode.
     private var openCodeWindows: [Int32: String] = [:]
     private var openCodeOrbs: Set<String> = []
     private var orbFolders: [String: String] = [:]
     private var orbActivity: [String: Date] = [:]
-    private var codexTitleCache: [String: String] = [:]
-    private var codexIndexMTime: Date?
-    private var claudeTitleCache: [String: String] = [:]
+    private let metadataQueue = DispatchQueue(label: "Prisma.SessionMetadata", qos: .utility)
+    private let metadataResolver = SessionMetadataResolver(folderLookup: OpenCodeWindows.workingDirectory(of:))
+    private var pendingMetadata: [String: SessionMetadataResolver.Request] = [:]
+    private var metadataGeneration: [String: UInt64] = [:]
+    private var nextMetadataGeneration: UInt64 = 0
+    private var metadataScheduled = false
     private var globalMouseMonitor: Any?
     private var localMouseMonitor: Any?
     private var hoverTimer: DispatchSourceTimer?
+    private var hoveredOrbID: String?
+    private var hoverRegion: NSRect?
+    private var hoverUpdateScheduled = false
+    private var hoverTrackingUntil: TimeInterval = 0
+    private var workspaceObservers: [NSObjectProtocol] = []
+    private var lockObservers: [NSObjectProtocol] = []
+    private var displayAsleep = false
+    private var sessionInactive = false
+    private var systemAsleep = false
+    private var screenLocked = false
+    private var renderingSuspended: Bool { displayAsleep || sessionInactive || systemAsleep || screenLocked }
     private var hotKeyRef: EventHotKeyRef?
     private var screenHotKeyRef: EventHotKeyRef?
     private var hotKeyHandler: EventHandlerRef?
     private var shortcutCancellable: AnyCancellable?
     private var screenShortcutCancellable: AnyCancellable?
     private var displayCancellable: AnyCancellable?
+    private var placementCancellable: AnyCancellable?
     private static weak var shared: AppDelegate?
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // An inactive-session notification can arrive before didFinishLaunching.
+        observeRenderingAvailability()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -139,6 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         startSessionMonitor()
         startHoverMonitor()
+        applyRenderingAvailability()
         installHotKeyHandler()
         registerPositionHotKey(settings.positionShortcut)
         registerScreenHotKey(settings.screenShortcut)
@@ -162,6 +187,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.overlay.rowScreen = self.settings.resolvedScreen()
                 self.overlay.reposition()
                 self.arrangeSessions()
+            }
+        placementCancellable = settings.$position
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.overlay.reposition(animated: true)
+                self?.arrangeSessions()
             }
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
@@ -188,6 +220,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         sessionMonitor?.cancel()
         hoverTimer?.cancel()
+        for observer in workspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        workspaceObservers.removeAll()
+        for observer in lockObservers { DistributedNotificationCenter.default().removeObserver(observer) }
+        lockObservers.removeAll()
         if let existing = hotKeyRef { UnregisterEventHotKey(existing) }
         if let existingScreen = screenHotKeyRef { UnregisterEventHotKey(existingScreen) }
         if let handler = hotKeyHandler { RemoveEventHandler(handler) }
@@ -294,27 +330,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startSessionMonitor() {
+        guard sessionMonitor == nil, !renderingSuspended else { return }
+        sessionMonitorGeneration &+= 1
+        let generation = sessionMonitorGeneration
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "Prisma.CodexSessions"))
-        timer.schedule(deadline: .now(), repeating: 2)
+        timer.schedule(deadline: .now(), repeating: 2, leeway: .milliseconds(150))
         timer.setEventHandler { [weak self] in
-            let processes = CodexSessionsMonitor.processList()
-            let sessions = processes.map(CodexSessionsMonitor.resumedSessions(in:))
-            let codexPIDs = processes.map(CodexSessionsMonitor.resumedSessionPIDs(in:)) ?? [:]
-            let claude = processes.map(ClaudeCodeWindows.windows(in:))
-            let openCode = processes.map(OpenCodeWindows.windows(in:))
-            let muse = processes.map(MuseWindows.windows(in:))
-            let antigravity = processes.map(AntigravityWindows.windows(in:))
+            let snapshot = CodexSessionsMonitor.agentProcesses().map(AgentProcessSnapshot.init)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                if let sessions { self.updateResumedSessions(sessions, pids: codexPIDs) }
+                guard !self.renderingSuspended, self.sessionMonitorGeneration == generation else { return }
+                if let snapshot { self.updateResumedSessions(snapshot.codex.sessions, pids: snapshot.codex.pids) }
                 self.checkSessionProcesses()
                 self.reapClosedCodexSessions()
-                if let claude { self.updateClaudeWindows(claude) }
-                if let openCode { self.updateOpenCodeWindows(openCode) }
-                if let muse { self.updateMuseWindows(muse) }
-                if let antigravity { self.updateAntigravityWindows(antigravity) }
+                if let snapshot {
+                    self.updateClaudeWindows(snapshot.claude)
+                    self.updateOpenCodeWindows(snapshot.openCode)
+                    self.updateMuseWindows(snapshot.muse)
+                    self.updateAntigravityWindows(snapshot.antigravity)
+                }
                 self.checkThinkingTranscripts()
                 self.reapStaleClosingSpeech()
+                if let id = self.hoveredOrbID, let target = self.sessionOverlays[id] {
+                    self.updateOrbMetadata(id, target: target)
+                }
             }
         }
         sessionMonitor = timer
@@ -326,7 +365,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let closed = resumedSessions.subtracting(current)
         resumedSessions = current
         for (id, pid) in pids { codexProcesses[id] = pid }
-        for id in sessions { _ = ensureSession(id, source: "codex", pid: pids[id].map(Int.init)) }
+        for id in sessions where sessionOverlays[id] == nil || closingSessions.contains(id) {
+            _ = ensureSession(id, source: "codex", pid: pids[id].map(Int.init))
+        }
         for id in closed {
             codexProcesses[id] = nil
             endSession(id)
@@ -467,6 +508,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let target = OverlayController(settings: settings)
         target.agentSource = resolvedSource
         target.keepsVisible = true
+        target.setRenderingSuspended(renderingSuspended)
         let phaseSeed = id.utf8.reduce(UInt64(5381)) { ($0 &* 33) &+ UInt64($1) }
         target.model.idlePhase = Double(phaseSeed % 628) / 100
         target.model.hasIdleState = true
@@ -486,6 +528,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateOrbMetadata(id, target: target)
         arrangeSessions()
         target.show()
+        refreshHoverRegion()
+        requestHoverUpdate()
+        trackHoverDuringMotion(for: 1.3)
         return target
     }
 
@@ -517,6 +562,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handOver(_ previous: String, to id: String) -> OverlayController? {
         guard let target = sessionOverlays.removeValue(forKey: previous) else { return nil }
+        discardOrbMetadata(previous)
+        if hoveredOrbID == previous { hoveredOrbID = id }
         pendingEnds.removeValue(forKey: previous)?.cancel()
         closingSessions.remove(previous)
         sessionOverlays[id] = target
@@ -602,7 +649,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func watchTranscript(_ path: String?, of id: String) {
         guard let path, !path.isEmpty else { return }
         let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.uint64Value ?? 0
-        thinkingTranscripts[id] = (path, size)
+        transcriptGeneration &+= 1
+        thinkingTranscripts[id] = TranscriptWatch(path: path, offset: size, generation: transcriptGeneration)
     }
 
     private func stopWatchingTranscript(of id: String?) {
@@ -613,23 +661,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Claude Code has no hook for Escape, but it writes the interruption to
     /// its transcript; the orb then returns to waiting.
     private func checkThinkingTranscripts() {
-        for (id, watched) in thinkingTranscripts {
-            guard let target = sessionOverlays[id], target.model.isThinking else {
-                thinkingTranscripts[id] = nil
-                continue
-            }
-            guard let handle = FileHandle(forReadingAtPath: watched.path) else { continue }
-            defer { try? handle.close() }
-            guard let end = try? handle.seekToEnd(), end > watched.offset else { continue }
-            let start = max(watched.offset, end > 65_536 ? end - 65_536 : 0)
-            try? handle.seek(toOffset: start)
-            let added = String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
-            thinkingTranscripts[id] = (watched.path, end)
-            // The marker is the text of a user entry; quoted inside a reply or
-            // a tool call it would appear escaped and does not count.
-            if added.contains(#""text":"[Request interrupted by user"#) {
-                target.model.isThinking = false
-                thinkingTranscripts[id] = nil
+        guard !transcriptReadInFlight, !thinkingTranscripts.isEmpty else { return }
+        for id in Array(thinkingTranscripts.keys) where sessionOverlays[id]?.model.isThinking != true {
+            thinkingTranscripts[id] = nil
+        }
+        let watches = thinkingTranscripts
+        guard !watches.isEmpty else { return }
+        transcriptReadInFlight = true
+        transcriptQueue.async { [weak self] in
+            let results = watches.compactMapValues(ThinkingTranscriptReader.read)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.transcriptReadInFlight = false
+                for (id, result) in results {
+                    guard self.thinkingTranscripts[id] == watches[id],
+                          let target = self.sessionOverlays[id], target.model.isThinking else { continue }
+                    self.thinkingTranscripts[id]?.offset = result.offset
+                    if result.interrupted {
+                        target.model.isThinking = false
+                        self.thinkingTranscripts[id] = nil
+                    }
+                }
             }
         }
     }
@@ -651,6 +703,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             target.rowScreen = screen
             target.reposition(animated: true, delay: delay)
         }
+        refreshHoverRegion()
+        requestHoverUpdate()
+        trackHoverDuringMotion(for: delay + 1.3)
+    }
+
+    private func observeRenderingAvailability() {
+        let center = NSWorkspace.shared.notificationCenter
+        let events: [(Notification.Name, (AppDelegate) -> Void)] = [
+            (NSWorkspace.screensDidSleepNotification, { $0.displayAsleep = true }),
+            (NSWorkspace.screensDidWakeNotification, { $0.displayAsleep = false }),
+            (NSWorkspace.sessionDidResignActiveNotification, { $0.sessionInactive = true }),
+            (NSWorkspace.sessionDidBecomeActiveNotification, { $0.sessionInactive = false }),
+            (NSWorkspace.willSleepNotification, { $0.systemAsleep = true }),
+            (NSWorkspace.didWakeNotification, { $0.systemAsleep = false })
+        ]
+        for (name, change) in events {
+            workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    change(self)
+                    self.applyRenderingAvailability()
+                }
+            })
+        }
+        // loginwindow's lock notifications are undocumented; keep their state
+        // independent of the public workspace sleep/session notifications.
+        for (name, locked) in [("com.apple.screenIsLocked", true), ("com.apple.screenIsUnlocked", false)] {
+            lockObservers.append(DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name(name), object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.screenLockChanged(locked) }
+            })
+        }
+    }
+
+    private func screenLockChanged(_ locked: Bool) {
+        screenLocked = locked
+        applyRenderingAvailability()
+    }
+
+    private func applyRenderingAvailability() {
+        guard overlay != nil else { return }
+        let suspended = renderingSuspended
+        overlay.setRenderingSuspended(suspended)
+        for target in sessionOverlays.values { target.setRenderingSuspended(suspended) }
+        if suspended {
+            hoverTimer?.cancel()
+            hoverTimer = nil
+            if let id = hoveredOrbID, let target = sessionOverlays[id] {
+                target.model.isHovered = false
+                target.setInteractive(false)
+            }
+            hoveredOrbID = nil
+            sessionMonitor?.cancel()
+            sessionMonitor = nil
+            sessionMonitorGeneration &+= 1
+        } else {
+            startSessionMonitor()
+            refreshHoverRegion()
+            requestHoverUpdate()
+        }
     }
 
     private func startHoverMonitor() {
@@ -658,46 +771,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.updateHoveredOrb()
-                if event.type == .leftMouseDown {
-                    self.handleScreenClick()
-                }
+                self.requestHoverUpdate()
+                if event.type == .leftMouseDown { self.handleScreenClick() }
             }
         }
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
-            self?.updateHoveredOrb()
+            self?.requestHoverUpdate()
             return event
         }
+    }
+
+    /// Coalesce pointer bursts; no recurring work remains for a still row.
+    private func requestHoverUpdate() {
+        guard !hoverUpdateScheduled, !renderingSuspended else { return }
+        hoverUpdateScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 90) { [weak self] in
+            guard let self else { return }
+            self.hoverUpdateScheduled = false
+            self.updateHoveredOrb()
+        }
+    }
+
+    private func refreshHoverRegion() {
+        hoverRegion = sessionOverlays.values.compactMap(\.hoverTrackingBounds)
+            .reduce(nil as NSRect?) { bounds, next in bounds.map { $0.union(next) } ?? next }
+    }
+
+    private func trackHoverDuringMotion(for duration: TimeInterval) {
+        hoverTrackingUntil = max(hoverTrackingUntil, ProcessInfo.processInfo.systemUptime + duration)
+        guard !renderingSuspended, hoverRegion?.contains(NSEvent.mouseLocation) == true, hoverTimer == nil else { return }
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 0.1, repeating: 0.08)
+        timer.schedule(deadline: .now() + 0.08, repeating: 0.08, leeway: .milliseconds(10))
         timer.setEventHandler { [weak self] in
-            self?.updateHoveredOrb()
+            guard let self else { return }
+            self.refreshHoverRegion()
+            self.updateHoveredOrb()
+            if ProcessInfo.processInfo.systemUptime >= self.hoverTrackingUntil
+                || self.hoverRegion?.contains(NSEvent.mouseLocation) != true {
+                self.hoverTimer?.cancel()
+                self.hoverTimer = nil
+            }
         }
         hoverTimer = timer
         timer.resume()
     }
 
-    /// Expands the single orb under the pointer without blocking mouse clicks
-    /// on the menu bar or windows behind the overlay panels.
+    /// Only the previous and new hovered orbs need a state or hit-test update.
     private func updateHoveredOrb() {
-        guard !sessionOverlays.isEmpty else { return }
         let mouse = NSEvent.mouseLocation
         var closestID: String?
         var closestDistance = CGFloat.greatestFiniteMagnitude
-        for (id, target) in sessionOverlays {
-            guard let distance = target.hoverDistance(to: mouse), distance < closestDistance else { continue }
-            closestDistance = distance
-            closestID = id
-        }
-        for (id, target) in sessionOverlays {
-            let hovered = (id == closestID)
-            if target.model.isHovered != hovered {
-                if hovered {
-                    updateOrbMetadata(id, target: target)
-                }
-                target.model.isHovered = hovered
+        if hoverRegion?.contains(mouse) == true {
+            for (id, target) in sessionOverlays {
+                guard let distance = target.hoverDistance(to: mouse), distance < closestDistance else { continue }
+                closestDistance = distance
+                closestID = id
             }
-            target.setInteractive(hovered)
+            if ProcessInfo.processInfo.systemUptime < hoverTrackingUntil {
+                trackHoverDuringMotion(for: 0)
+            }
+        }
+        guard hoveredOrbID != closestID else { return }
+        let previous = hoveredOrbID
+        hoveredOrbID = closestID
+        if let previous, let target = sessionOverlays[previous] {
+            target.model.isHovered = false
+            target.setInteractive(false)
+        }
+        if let closestID, let target = sessionOverlays[closestID] {
+            updateOrbMetadata(closestID, target: target)
+            target.model.isHovered = true
+            target.setInteractive(true)
         }
     }
 
@@ -716,121 +860,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             target.model.agentTitle = agentName
         }
 
-        let pid = sessionProcesses[id] ?? codexProcesses[id]
-        let folder = pid.flatMap { openCodeWindows[$0] ?? OpenCodeWindows.workingDirectory(of: $0) } ?? orbFolders[id]
-        let folderName = folder.map { URL(fileURLWithPath: $0).lastPathComponent }.flatMap { $0.isEmpty ? nil : $0 }
-
-        let title: String
-        switch source {
-        case "codex":
-            refreshCodexTitleCacheIfNeeded()
-            if let threadName = codexTitleCache[id.lowercased()], !threadName.isEmpty {
-                title = threadName
-            } else if let folderName {
-                title = folderName
-            } else {
-                title = String(id.prefix(8))
-            }
-        case "claude-code":
-            if let claudeTitle = resolveClaudeTitle(for: id), !claudeTitle.isEmpty {
-                title = claudeTitle
-            } else if let folderName {
-                title = folderName
-            } else {
-                title = id.hasPrefix("claude:") ? "Sesión activa" : String(id.prefix(8))
-            }
-        case "opencode":
-            if let folderName {
-                title = folderName
-            } else {
-                title = "Sesión activa"
-            }
-        default:
-            title = folderName ?? ""
-        }
-        if target.model.sessionTitle != title {
-            target.model.sessionTitle = title
-        }
-    }
-
-    private func refreshCodexTitleCacheIfNeeded() {
-        let indexURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex/session_index.jsonl")
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: indexURL.path),
-              let mtime = attrs[.modificationDate] as? Date else { return }
-        if let last = codexIndexMTime, last == mtime, !codexTitleCache.isEmpty { return }
-        codexIndexMTime = mtime
-        guard let content = try? String(contentsOf: indexURL, encoding: .utf8) else { return }
-        var map: [String: String] = [:]
-        for line in content.split(separator: "\n") {
-            guard let data = line.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let id = (obj["id"] as? String)?.lowercased(),
-                  let name = (obj["thread_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !name.isEmpty else { continue }
-            map[id] = name
-        }
-        codexTitleCache = map
-    }
-
-    private func resolveClaudeTitle(for id: String) -> String? {
-        guard !id.hasPrefix("claude:") else { return nil }
-        if let cached = claudeTitleCache[id] { return cached }
-        let projectsRoot = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude/projects")
-        guard let dirs = try? FileManager.default.contentsOfDirectory(
-            at: projectsRoot,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) else { return nil }
-        for dir in dirs {
-            let file = dir.appendingPathComponent("\(id).jsonl")
-            guard FileManager.default.fileExists(atPath: file.path),
-                  let handle = try? FileHandle(forReadingFrom: file) else { continue }
-            defer { try? handle.close() }
-            let data = (try? handle.read(upToCount: 49_152)) ?? Data()
-            let text = String(decoding: data, as: UTF8.self)
-            var found: String?
-            for line in text.split(separator: "\n") {
-                guard let lineData = line.data(using: .utf8),
-                      let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else { continue }
-                if let custom = (obj["customTitle"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !custom.isEmpty {
-                    found = custom
-                    break
-                }
-                if let summary = (obj["summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
-                    found = summary
-                    break
-                }
-                if found == nil,
-                   (obj["type"] as? String) == "user",
-                   let message = obj["message"] as? [String: Any],
-                   let raw = message["content"] as? String {
-                    let cleaned = Self.cleanPromptTitle(raw)
-                    if !cleaned.isEmpty { found = cleaned }
-                }
-            }
-            if let found {
-                claudeTitleCache[id] = found
-                return found
-            }
-        }
-        return nil
-    }
-
-    private static func cleanPromptTitle(_ raw: String) -> String {
-        if raw.contains("<local-command-") || raw.contains("<command-name>") { return "" }
-        let stripped = raw.replacingOccurrences(
-            of: #"<[^>]+>"#,
-            with: " ",
-            options: .regularExpression
+        let request = SessionMetadataResolver.Request(
+            id: id, source: source, pid: sessionProcesses[id] ?? codexProcesses[id],
+            folder: sessionProcesses[id].flatMap { openCodeWindows[$0] } ?? orbFolders[id]
         )
-        let line = stripped
-            .split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .first { !$0.isEmpty } ?? ""
-        if line.count <= 42 { return line }
-        return String(line.prefix(40)).trimmingCharacters(in: .whitespaces) + "…"
+        pendingMetadata[id] = request
+        nextMetadataGeneration &+= 1
+        metadataGeneration[id] = nextMetadataGeneration
+        guard !metadataScheduled else { return }
+        metadataScheduled = true
+        DispatchQueue.main.async { [weak self] in self?.flushOrbMetadata() }
+    }
+
+    private func flushOrbMetadata() {
+        metadataScheduled = false
+        let requests = pendingMetadata
+        pendingMetadata.removeAll(keepingCapacity: true)
+        let generations = metadataGeneration
+        let resolver = metadataResolver
+        metadataQueue.async { [weak self] in
+            let titles = requests.mapValues { resolver.resolve($0) }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                for (id, title) in titles {
+                    guard self.metadataGeneration[id] == generations[id],
+                          let target = self.sessionOverlays[id],
+                          target.model.sessionTitle != title else { continue }
+                    target.model.sessionTitle = title
+                }
+            }
+        }
+    }
+
+    private func discardOrbMetadata(_ id: String) {
+        pendingMetadata[id] = nil
+        metadataGeneration[id] = nil
+        let resolver = metadataResolver
+        metadataQueue.async { resolver.remove(id) }
     }
 
     private func handleScreenClick() {
@@ -976,6 +1042,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               !speechQueue.contains(where: { $0.request.session_id == id }) else { return }
         closingSessions.remove(id)
         guard let target = sessionOverlays.removeValue(forKey: id) else { return }
+        discardOrbMetadata(id)
+        if hoveredOrbID == id { hoveredOrbID = nil; target.model.isHovered = false; target.setInteractive(false) }
         sessionOrder.removeAll { $0 == id }
         sessionProcesses[id] = nil
         codexProcesses[id] = nil

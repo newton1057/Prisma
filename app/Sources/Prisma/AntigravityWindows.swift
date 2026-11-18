@@ -14,12 +14,14 @@ enum AntigravityWindows {
     /// Open windows in `ps -axo pid=,args=` output, with the conversation they
     /// resume when `--conversation` names a UUID.
     static func windows(in processList: String) -> [Int32: String?] {
+        windows(in: AgentProcess.parse(processList))
+    }
+
+    static func windows(in processes: [AgentProcess]) -> [Int32: String?] {
         var windows: [Int32: String?] = [:]
-        for line in processList.split(separator: "\n") {
-            let fields = line.split(whereSeparator: \.isWhitespace).map(String.init)
-            guard fields.count >= 2, let pid = Int32(fields[0]),
-                  URL(fileURLWithPath: fields[1]).lastPathComponent == "agy" else { continue }
-            let arguments = Array(fields.dropFirst(2))
+        for process in processes where process.executable == "agy" {
+            let pid = process.pid
+            let arguments = process.arguments
             // One-shot runs (`agy -p`) still get an orb from their hooks.
             guard opensWindow(arguments) else { continue }
             windows[pid] = resumedConversation(in: arguments)

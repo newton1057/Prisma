@@ -15,13 +15,14 @@ enum MuseWindows {
     /// resume when its identifier is a UUID. The launcher execs into a
     /// versioned binary (`muse-bin-<version>`), so either name is a window.
     static func windows(in processList: String) -> [Int32: String?] {
+        windows(in: AgentProcess.parse(processList))
+    }
+
+    static func windows(in processes: [AgentProcess]) -> [Int32: String?] {
         var windows: [Int32: String?] = [:]
-        for line in processList.split(separator: "\n") {
-            let fields = line.split(whereSeparator: \.isWhitespace).map(String.init)
-            guard fields.count >= 2, let pid = Int32(fields[0]) else { continue }
-            let name = URL(fileURLWithPath: fields[1]).lastPathComponent
-            guard name == "muse" || name.hasPrefix("muse-bin-") else { continue }
-            let arguments = Array(fields.dropFirst(2))
+        for process in processes where process.executable == "muse" || process.executable.hasPrefix("muse-bin-") {
+            let pid = process.pid
+            let arguments = process.arguments
             // One-shot runs (`muse exec`) still get an orb from their hooks.
             guard opensWindow(arguments) else { continue }
             windows[pid] = resumedSession(in: arguments)

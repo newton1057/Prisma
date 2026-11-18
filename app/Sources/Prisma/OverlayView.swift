@@ -328,11 +328,16 @@ struct SmoothBlend<Value: SIMD> where Value.Scalar == Double {
 /// Phases and levels that are integrated frame by frame.
 struct OrbMotion {
     private var lastTime: Double?
+    /// Time of the light itself. It advances at `pace` times real time, so a
+    /// waiting orb can slow its light to a stop and wake it up without a jump.
+    private(set) var clock = 0.0
     private(set) var spin = 0.0
     private(set) var sweep = 0.0
     private(set) var audio = 0.0
 
-    mutating func advance(to time: Double, pose: SIMD3<Double>, audioTarget: Double) {
+    mutating func resetTimestamp() { lastTime = nil }
+
+    mutating func advance(to time: Double, pose: SIMD3<Double>, pace: Double = 1, audioTarget: Double) {
         guard let last = lastTime else {
             lastTime = time
             return
@@ -340,9 +345,11 @@ struct OrbMotion {
         guard time > last else { return }
         let dt = min(time - last, 0.1)
         lastTime = time
+        let step = dt * pace
+        clock += step
         // Colours circle faster while thinking and drift slowly while waiting.
-        spin += dt * (0.03 * pose.x + 0.1035 * pose.y + 0.038 * pose.z)
-        sweep += dt * (0.75 * pose.x + 1.40 * pose.y + 0.75 * pose.z)
+        spin += step * (0.03 * pose.x + 0.1035 * pose.y + 0.038 * pose.z)
+        sweep += step * (0.75 * pose.x + 1.40 * pose.y + 0.75 * pose.z)
         let rate = audioTarget > audio ? 24.0 : 9.0
         audio += (audioTarget - audio) * (1 - exp(-rate * dt))
     }
@@ -353,6 +360,11 @@ final class OverlayModel: ObservableObject {
     static let activeScale: Double = 0.50
     static let inactiveOpacity: Double = 0.50
     static let activeOpacity: Double = 0.95
+    /// A waiting orb keeps drifting this long before its light comes to rest.
+    static let restDelay: TimeInterval = 3
+    /// The light slows to a stop over `settleDuration` and wakes up faster.
+    static let settleDuration: TimeInterval = 2.6
+    static let wakeDuration: TimeInterval = 0.8
 
     @Published var visible = false
     @Published var isSpeaking = false {
@@ -381,6 +393,15 @@ final class OverlayModel: ObservableObject {
     @Published var haloTheme: HaloTheme = .prisma
     /// True while the light changes shape, so it is drawn at 60 fps.
     @Published private(set) var isMorphing = false
+    /// True once a waiting orb's light has come to rest: its timeline pauses
+    /// and the last frame stays on screen until the orb is active again.
+    @Published private(set) var isResting = false
+    /// Display sleep and inactive login sessions keep the last rendered frame.
+    @Published private(set) var isRenderingSuspended = false
+    /// Waiting orbs come to rest after `restDelay`; when false they keep moving.
+    var restsWhenIdle = true {
+        didSet { if oldValue != restsWhenIdle { stateChanged() } }
+    }
     var idlePhase: Double = 0
     var clock: () -> TimeInterval = { Date().timeIntervalSinceReferenceDate }
     var onActiveChange: (() -> Void)?
@@ -396,6 +417,11 @@ final class OverlayModel: ObservableObject {
     private var hoverBadge = SmoothBlend(SIMD2<Double>(0, 0))
     private var lastActive = true
     private var motion = OrbMotion()
+    /// How fast the light's own clock runs: 1 while it moves, 0 at rest.
+    private var pace = SmoothBlend(SIMD2<Double>(1, 0))
+    /// When a waiting orb stopped being active; nil while it moves for a reason.
+    private var idleSince: TimeInterval?
+    private var restCheck = 0
     private var morphGeneration = 0
     private var morphingUntil: TimeInterval = 0
     /// Window origin while the orb slides to a new place in the row.
@@ -405,6 +431,13 @@ final class OverlayModel: ObservableObject {
     /// Session orbs shrink while waiting unless they are thinking, speaking or hovered.
     var isActive: Bool {
         !hasIdleState || isThinking || isSpeaking || isHovered
+    }
+
+    func setRenderingSuspended(_ suspended: Bool) {
+        guard suspended != isRenderingSuspended else { return }
+        motion.resetTimestamp()
+        isRenderingSuspended = suspended
+        if !suspended { restIfSettled() }
     }
 
     /// Thinking wins over speaking; between turns the orb waits if it can.
@@ -423,13 +456,14 @@ final class OverlayModel: ObservableObject {
         let hoverTarget = SIMD2<Double>((isHovered && showHoverInfo) ? 1 : 0, 0)
         let activeChanged = activeNow != lastActive
         lastActive = activeNow
-        guard visible else {
+        guard visible && !isRenderingSuspended else {
             // A hidden orb appears directly in its current shape and size.
             self.pose.snap(to: pose, at: now)
             talking.snap(to: talk, at: now)
             activity.snap(to: active, at: now)
             hoverBadge.snap(to: hoverTarget, at: now)
             if activeChanged { onActiveChange?() }
+            updateRest(at: now)
             return
         }
         if pose != self.pose.target {
@@ -452,6 +486,88 @@ final class OverlayModel: ObservableObject {
         }
         if activeChanged {
             onActiveChange?()
+        }
+        updateRest(at: now)
+    }
+
+    // MARK: Resting
+
+    /// An active orb's light always moves. A waiting orb drifts for
+    /// `restDelay`, then its light slows to a stop and its timeline pauses, so
+    /// a row of waiting orbs costs nothing until one of them wakes up.
+    private func updateRest(at now: TimeInterval) {
+        applyDueSettle(at: now)
+        guard !isActive && restsWhenIdle else {
+            idleSince = nil
+            restCheck += 1
+            if pace.target.x < 1 {
+                if visible {
+                    pace.retarget(to: SIMD2(1, 0), at: now, duration: Self.wakeDuration)
+                } else {
+                    pace.snap(to: SIMD2(1, 0), at: now)
+                }
+            }
+            if isResting { isResting = false }
+            return
+        }
+        guard idleSince == nil else { return }
+        idleSince = now
+        scheduleRestCheck(after: Self.restDelay + Self.settleDuration)
+    }
+
+    /// Starts slowing the light `restDelay` after the orb went idle. Whichever
+    /// frame comes first applies it, but always at the time it was due, so the
+    /// slowdown does not depend on when frames happen to be drawn.
+    private func applyDueSettle(at time: TimeInterval) {
+        guard let idleSince, pace.target.x > 0 else { return }
+        let due = idleSince + Self.restDelay
+        guard time >= due else { return }
+        pace.retarget(to: SIMD2(0, 0), at: due, duration: Self.settleDuration)
+    }
+
+    /// The orb is appearing or leaving: draw every frame of it, then let a
+    /// waiting orb rest again. An orb that appears drifts again before resting.
+    func presentationChanged() {
+        if isResting { isResting = false }
+        guard idleSince != nil else { return }
+        if transitionTo > 0.5 {
+            let now = clock()
+            applyDueSettle(at: now)
+            idleSince = now
+            if pace.target.x < 1 {
+                pace.retarget(to: SIMD2(1, 0), at: now, duration: Self.wakeDuration)
+            }
+        }
+        // The check reschedules itself until the light has settled.
+        scheduleRestCheck(after: transitionDuration)
+    }
+
+    /// Pauses the timeline once a waiting orb's light has stopped and nothing
+    /// else is changing; otherwise checks again when that should be true.
+    func restIfSettled() {
+        let now = clock()
+        guard visible, restsWhenIdle, !isActive, let idleSince else { return }
+        applyDueSettle(at: now)
+        // Every blend of a morph ends by `morphingUntil`; `isMorphing` itself
+        // only clears a moment later, on a timer.
+        let busyUntil = max(
+            idleSince + Self.restDelay + Self.settleDuration,
+            transitionStartTime + transitionDuration,
+            morphingUntil
+        )
+        guard now >= busyUntil else {
+            scheduleRestCheck(after: max(0.1, busyUntil - now))
+            return
+        }
+        if !isResting { isResting = true }
+    }
+
+    private func scheduleRestCheck(after delay: TimeInterval) {
+        restCheck += 1
+        let check = restCheck
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay + 0.05) { [weak self] in
+            guard let self, self.restCheck == check else { return }
+            self.restIfSettled()
         }
     }
 
@@ -516,9 +632,12 @@ final class OverlayModel: ObservableObject {
         weights /= total
         let speaking = min(1, max(0, talking.sample(at: time).value.x))
         let hover = min(1, max(0, hoverBadge.sample(at: time).value.x))
-        motion.advance(to: time, pose: weights, audioTarget: isSpeaking ? audioLevel : 0)
+        applyDueSettle(at: time)
+        let pace = min(1, max(0, self.pace.sample(at: time).value.x))
+        motion.advance(to: time, pose: weights, pace: pace, audioTarget: isSpeaking ? audioLevel : 0)
         return OrbFrame(
-            time: time,
+            // The light's own clock: it stands still while the orb rests.
+            time: motion.clock,
             voice: weights.x,
             thinking: weights.y,
             idle: weights.z,
@@ -603,6 +722,24 @@ final class MaskedVisualEffectView: NSVisualEffectView {
     }
 }
 
+/// The animation and hit testing use the same canvas for every placement.
+/// The native panel retains only the region containing the orb and its badge.
+enum OrbViewport {
+    static let canvas = CGSize(width: 460, height: 360)
+
+    /// Bounds in AppKit coordinates (origin at the lower left).
+    static func bounds(for position: OverlayPosition) -> CGRect {
+        switch position {
+        case .top: return CGRect(x: 80, y: 118, width: 300, height: 242)
+        case .bottom: return CGRect(x: 80, y: 0, width: 300, height: 220)
+        case .center: return CGRect(x: 80, y: 88, width: 300, height: 232)
+        case .left: return CGRect(x: 0, y: 78, width: 384, height: 204)
+        case .right: return CGRect(x: 76, y: 78, width: 384, height: 204)
+        case .corner: return CGRect(x: 140, y: 0, width: 320, height: 220)
+        }
+    }
+}
+
 struct OverlayView: View {
     @ObservedObject var model: OverlayModel
 
@@ -614,38 +751,42 @@ struct OverlayView: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: minimumFrameInterval, paused: !model.visible)) { timeline in
-            let time = timeline.date.timeIntervalSinceReferenceDate
-            let presentation = model.currentPresentation(at: time)
-            let slide = edgeTransform(for: model.position, presentation: presentation)
-            let frame = model.frame(at: time)
-
-            ZStack {
-                if frame.hover > 0.002 && !model.agentTitle.isEmpty {
-                    OrbInfoBadgeView(
-                        agentTitle: model.agentTitle,
-                        sessionTitle: model.sessionTitle,
-                        theme: frame.theme,
-                        position: model.position,
-                        orbScale: CGFloat(frame.scale),
-                        hover: CGFloat(frame.hover)
-                    )
-                }
-
-                SiriLiquidGlassOrbView(frame: frame)
-                    .accessibilityLabel(model.isThinking ? "Prisma está pensando" : "Prisma")
-                    .scaleEffect(frame.scale, anchor: slide.anchor)
-                    .scaleEffect(
-                        x: slide.scaleX,
-                        y: slide.scaleY,
-                        anchor: slide.anchor
-                    )
-                    .offset(x: slide.offsetX, y: slide.offsetY)
-            }
-            .frame(width: 460, height: 360)
-            .clipped()
-            .opacity(model.visible ? frame.opacity * min(1, presentation * 12) : 0)
+        // A resting orb keeps its last frame on screen without redrawing.
+        TimelineView(.animation(minimumInterval: minimumFrameInterval, paused: !model.visible || model.isResting || model.isRenderingSuspended)) { timeline in
+            canvas(at: timeline.date.timeIntervalSinceReferenceDate)
         }
+    }
+
+    func canvas(at time: TimeInterval) -> some View {
+        let presentation = model.currentPresentation(at: time)
+        let slide = edgeTransform(for: model.position, presentation: presentation)
+        let frame = model.frame(at: time)
+
+        return ZStack {
+            if frame.hover > 0.002 && !model.agentTitle.isEmpty {
+                OrbInfoBadgeView(
+                    agentTitle: model.agentTitle,
+                    sessionTitle: model.sessionTitle,
+                    theme: frame.theme,
+                    position: model.position,
+                    orbScale: CGFloat(frame.scale),
+                    hover: CGFloat(frame.hover)
+                )
+            }
+
+            SiriLiquidGlassOrbView(frame: frame)
+                .accessibilityLabel(model.isThinking ? "Prisma está pensando" : "Prisma")
+                .scaleEffect(frame.scale, anchor: slide.anchor)
+                .scaleEffect(
+                    x: slide.scaleX,
+                    y: slide.scaleY,
+                    anchor: slide.anchor
+                )
+                .offset(x: slide.offsetX, y: slide.offsetY)
+        }
+        .frame(width: OrbViewport.canvas.width, height: OrbViewport.canvas.height)
+        .clipped()
+        .opacity(model.visible ? frame.opacity * min(1, presentation * 12) : 0)
     }
 
     private func edgeTransform(
@@ -874,6 +1015,105 @@ enum OrbEnergy {
     }
 }
 
+// These layers only depend on fixed geometry or the theme. Equatable views
+// keep SwiftUI from rebuilding their bodies on every timeline update.
+private struct OrbShadow: View, Equatable {
+    var body: some View {
+        Circle()
+            .fill(Color.black.opacity(0.24))
+            .frame(width: 190, height: 190)
+            .offset(y: 12)
+            .blur(radius: 20)
+    }
+}
+
+private struct OrbAura: View, Equatable {
+    let theme: HaloTheme
+
+    var body: some View {
+        let pal = theme.palette
+        return Circle()
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color(red: pal.upperBright.x, green: pal.upperBright.y, blue: pal.upperBright.z).opacity(0.20),
+                        Color(red: pal.lowerBright.x, green: pal.lowerBright.y, blue: pal.lowerBright.z).opacity(0.30)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .frame(width: 186, height: 186)
+            .blur(radius: 22)
+    }
+}
+
+private struct OrbSideReflections: View, Equatable {
+    var body: some View {
+        HStack(spacing: 0) {
+            LinearGradient(
+                colors: [
+                    .white.opacity(0.24),
+                    .white.opacity(0.04),
+                    .clear
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: 42)
+
+            Spacer()
+
+            LinearGradient(
+                colors: [
+                    .clear,
+                    .white.opacity(0.04),
+                    .white.opacity(0.20)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: 42)
+        }
+    }
+}
+
+private struct OrbRim: View, Equatable {
+    var body: some View {
+        ZStack {
+            Circle()
+                .inset(by: 1.5)
+                .stroke(
+                    LinearGradient(
+                        stops: [
+                            .init(color: Color.white.opacity(0.04), location: 0.00),
+                            .init(color: Color.white.opacity(0.16), location: 0.42),
+                            .init(color: Color(red: 0.74, green: 0.88, blue: 1.0).opacity(0.36), location: 0.78),
+                            .init(color: Color.white.opacity(0.62), location: 1.00)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1.15
+                )
+            Circle()
+                .stroke(
+                    LinearGradient(
+                        stops: [
+                            .init(color: Color(red: 0.42, green: 0.36, blue: 0.32).opacity(0.48), location: 0.00),
+                            .init(color: Color.white.opacity(0.30), location: 0.30),
+                            .init(color: Color.white.opacity(0.68), location: 0.65),
+                            .init(color: Color.white.opacity(0.95), location: 1.00)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1.35
+                )
+        }
+    }
+}
+
 struct SiriLiquidGlassOrbView: View {
     let frame: OrbFrame
 
@@ -904,27 +1144,8 @@ struct SiriLiquidGlassOrbView: View {
         let tau = time + frame.idlePhase
         let pal = frame.theme.palette
         ZStack {
-            // 1. Unclipped Gaussian drop shadow & subtle audio-reactive aura
-            orbShape
-                .fill(Color.black.opacity(0.24))
-                .frame(width: orbWidth - 8, height: orbHeight - 8)
-                .offset(y: 12)
-                .blur(radius: 20)
-
-            orbShape
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: pal.upperBright.x, green: pal.upperBright.y, blue: pal.upperBright.z).opacity(0.20),
-                            Color(red: pal.lowerBright.x, green: pal.lowerBright.y, blue: pal.lowerBright.z).opacity(0.30)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .frame(width: orbWidth - 12, height: orbHeight - 12)
-                .blur(radius: 22)
-                .opacity(0.3 + 0.7 * energy)
+            OrbShadow().equatable()
+            OrbAura(theme: frame.theme).equatable().opacity(0.3 + 0.7 * energy)
 
             // 2. Circular liquid glass shell shared by every state
             ZStack {
@@ -968,7 +1189,7 @@ struct SiriLiquidGlassOrbView: View {
                 // above the voice horizon and closes over the lower glass as
                 // the light curls into a ring, while letting the screen behind
                 // the orb remain visible through the glass.
-                RadialGradient(
+                let smokedInterior = RadialGradient(
                     stops: [
                         .init(color: Color(red: 0.01, green: 0.015, blue: 0.03).opacity(0.88), location: 0),
                         .init(color: Color(red: 0.02, green: 0.03, blue: 0.05).opacity(0.85), location: 0.60),
@@ -979,14 +1200,18 @@ struct SiriLiquidGlassOrbView: View {
                     startRadius: 0,
                     endRadius: orbHeight / 2
                 )
-                .mask {
-                    ZStack {
-                        Color.black.opacity(1 - frame.voice)
-                        if showsVoice {
+                if showsVoice {
+                    smokedInterior.mask {
+                        ZStack {
+                            Color.black.opacity(1 - frame.voice)
                             VoiceHorizonSky(frame: frame, energy: energy, color: .black)
                                 .blur(radius: 8.0)
                         }
                     }
+                } else {
+                    // With no visible voice layer the mask is uniformly black;
+                    // skip its offscreen surface rather than masking a constant.
+                    smokedInterior
                 }
 
                 if showsVoice {
@@ -1016,33 +1241,7 @@ struct SiriLiquidGlassOrbView: View {
                     .frame(width: orbWidth, height: orbHeight)
                     .scaleEffect(breathScale)
 
-                // Foundation F: Cylindrical 3D side glass curvature reflections
-                HStack(spacing: 0) {
-                    LinearGradient(
-                        colors: [
-                            .white.opacity(0.24),
-                            .white.opacity(0.04),
-                            .clear
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                    .frame(width: 42)
-
-                    Spacer()
-
-                    LinearGradient(
-                        colors: [
-                            .clear,
-                            .white.opacity(0.04),
-                            .white.opacity(0.20)
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                    .frame(width: 42)
-                }
-                .blendMode(.overlay)
+                OrbSideReflections().equatable().blendMode(.overlay)
 
                 if showsVoice {
                     // Foundation G: Bottom refractive caustics in the clear lower hemisphere
@@ -1059,41 +1258,7 @@ struct SiriLiquidGlassOrbView: View {
             .frame(width: orbWidth, height: orbHeight)
             .compositingGroup()
             .clipShape(orbShape)
-            // Inner 3D optical glass rim bevel
-            .overlay(
-                orbShape
-                    .inset(by: 1.5)
-                    .stroke(
-                        LinearGradient(
-                            stops: [
-                                .init(color: Color.white.opacity(0.04), location: 0.00),
-                                .init(color: Color.white.opacity(0.16), location: 0.42),
-                                .init(color: Color(red: 0.74, green: 0.88, blue: 1.0).opacity(0.36), location: 0.78),
-                                .init(color: Color.white.opacity(0.62), location: 1.00)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ),
-                        lineWidth: 1.15
-                    )
-            )
-            // Crisp outer specular Liquid Glass border
-            .overlay(
-                orbShape
-                    .stroke(
-                        LinearGradient(
-                            stops: [
-                                .init(color: Color(red: 0.42, green: 0.36, blue: 0.32).opacity(0.48), location: 0.00),
-                                .init(color: Color.white.opacity(0.30), location: 0.30),
-                                .init(color: Color.white.opacity(0.68), location: 0.65),
-                                .init(color: Color.white.opacity(0.95), location: 1.00)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ),
-                        lineWidth: 1.35
-                    )
-            )
+            .overlay(OrbRim().equatable())
         }
     }
 
@@ -1178,7 +1343,6 @@ struct PrismaBeamView: View {
             // it composes exactly like two screened layers.
             Canvas { context, size in
                 let beam = PrismaBeam(frame: frame, energy: energy, size: size)
-
                 var bloom = context
                 bloom.addFilter(.blur(radius: 9.0 - 3.0 * frame.thinking))
                 bloom.drawLayer { layer in
@@ -1230,6 +1394,25 @@ struct PrismaBeam {
 
     private static let outlineSamples = 72
     private static let colourStride = 4
+
+    /// Sampling positions and voice tapers do not depend on the frame or band.
+    private struct Sample {
+        let u: Double
+        let theta: Double
+        let arch: Double
+        let voiceTaper: Double
+        let thicknessTaper: Double
+    }
+    private static let samples: [Sample] = (0...outlineSamples).map { i in
+        let u = Double(i) / Double(outlineSamples)
+        let centred = 2 * u - 1
+        let arch = max(0, 1 - centred * centred)
+        let logArch = arch > 0 ? log(arch) : -.infinity
+        return Sample(u: u, theta: 2 * Double.pi * u, arch: arch,
+                      voiceTaper: exp(1.35 * logArch), thicknessTaper: exp(1.4 * logArch))
+    }
+    /// All loop-only bands use exactly the same colours at each sampled u.
+    private var loopColours: [Color] = []
 
     let frame: OrbFrame
     let energy: Double
@@ -1286,6 +1469,12 @@ struct PrismaBeam {
             wv + wt * 1.12 + wi * (1.04 + 0.04 * sin(tau * 0.4)),
             wv + wt * 0.92 + wi * 0.94
         )
+        if frame.voice == 0 {
+            let band = Band(lift: 0, arch: 0, thickness: 0, phase: 0, stops: [])
+            loopColours = stride(from: 0, through: Self.outlineSamples, by: Self.colourStride).map {
+                colour(band, at: Double($0) / Double(Self.outlineSamples))
+            }
+        }
     }
 
     private static func sinc(_ x: Double) -> Double {
@@ -1445,10 +1634,10 @@ struct PrismaBeam {
     /// Colour of the beam at `u`, blended in premultiplied space so the
     /// light keeps its brightness while it changes palette.
     private func colour(_ band: Band, at u: Double) -> Color {
-        let voice = Self.voiceColour(band.stops, at: u)
-        let ring = paletteColour(u - frame.spin - frame.idlePhase * 0.16)
+        let voice = frame.voice > 0 ? Self.voiceColour(band.stops, at: u) : SIMD4<Double>()
         let voiceAlpha = frame.voice * voice.w
         let loopAlpha = (frame.thinking + frame.idle * 0.28) * loopFactor(at: u)
+        let ring = loopAlpha > 0 ? paletteColour(u - frame.spin - frame.idlePhase * 0.16) : SIMD3<Double>()
         let alpha = voiceAlpha + loopAlpha
         guard alpha > 1e-5 else { return .clear }
         let rgb = (SIMD3(voice.x, voice.y, voice.z) * voiceAlpha + ring * loopAlpha) / alpha
@@ -1494,7 +1683,7 @@ struct PrismaBeam {
             }
             previous = angle
             let u = Double(k * Self.colourStride) / Double(Self.outlineSamples)
-            stops.append(Gradient.Stop(color: colour(band, at: u), location: min(1, travelled / twoPi)))
+            stops.append(Gradient.Stop(color: loopColours.isEmpty ? colour(band, at: u) : loopColours[k], location: min(1, travelled / twoPi)))
         }
 
         context.fill(
@@ -1532,16 +1721,14 @@ struct PrismaBeam {
         var spine: [CGPoint] = []
         outer.reserveCapacity(count + 1)
         inner.reserveCapacity(count + 1)
+        spine.reserveCapacity(count / Self.colourStride + 1)
 
         // Poses with no weight are skipped; usually only one is visible.
         let hasVoice = wv > 1e-5, hasRing = wt > 1e-5, hasIdle = wi > 1e-5
         let innerFold = 0.20 + 1.10 * loopMotion
 
-        for i in 0...count {
-            let u = Double(i) / Double(count)
-            let theta = twoPi * u
-            let centred = 2 * u - 1
-            let arch = max(0, 1 - centred * centred)
+        for (i, sample) in Self.samples.enumerated() {
+            let u = sample.u, theta = sample.theta, arch = sample.arch
 
             // The waiting fold lets the light slide gently along its loop.
             let warp = hasIdle ? idleMotion * (0.22 * sin(2 * theta + tau * 0.55) + warpBase) : 0
@@ -1559,14 +1746,13 @@ struct PrismaBeam {
             var shared = 0.0
             var fold = 0.0
             if hasVoice {
-                let logArch = arch > 0 ? log(arch) : -.infinity
                 let h1 = 0.55 * sin(u * 6.2 - waveTime)
                 let h2 = 0.30 * sin(u * 12.4 + waveTime * 1.35)
                 let h3 = 0.15 * cos(u * 18.0 - waveTime * 1.70)
-                let wave = (h1 + h2 + h3) * waveAmplitude * exp(1.35 * logArch)
+                let wave = (h1 + h2 + h3) * waveAmplitude * sample.voiceTaper
                 offset += wv * (-lift + band.arch * arch - wave)
                 let pulse = 1 + 0.28 * energy * sin(u * 9.0 + t * 7.0 + band.phase)
-                shared += wv * band.thickness * 0.5 * exp(1.4 * logArch) * pulse
+                shared += wv * band.thickness * 0.5 * sample.thicknessTaper * pulse
             }
             if hasRing || hasIdle {
                 let sweep = 0.5 + 0.5 * sin(theta - frame.sweep + sweepOffset)

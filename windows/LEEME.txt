@@ -1,4 +1,4 @@
-Prisma para Windows 1.0.6
+Prisma para Windows 1.0.7
 =========================
 
 Prisma lee en voz alta las respuestas de Codex, Claude Code, OpenCode, Muse
@@ -42,10 +42,9 @@ bandeja. Antes de instalar nada se comprueban la firma digital, el tamaño y
 el hash del archivo. La actualización reemplaza el código y el plugin,
 conserva tus ajustes, el entorno y la voz, y vuelve a abrir Prisma.
 
-Si tienes 1.0.2 o anterior, instala esta versión una vez a mano: cierra
-Prisma y ejecuta el instalador nuevo. Los que ya tengan una versión con
-actualizador (1.0.3 o posterior) recibirán la 1.0.6 desde Ajustes, sin hacer
-nada.
+Para instalar este ZIP con una versión anterior abierta, cierra Prisma
+desde la bandeja y ejecuta el instalador nuevo. Desde la versión 1.0.3,
+Ajustes muestra la versión disponible en el canal de actualizaciones.
 
 También puedes usar "Buscar actualizaciones" en Ajustes o en la bandeja. Si
 falla la comprobación, revisa la conexión o el proxy. Si el aviso dice que

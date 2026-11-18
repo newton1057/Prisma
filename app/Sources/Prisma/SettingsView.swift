@@ -170,6 +170,12 @@ struct SettingsView: View {
                 Toggle("Mostrar el orbe mientras el agente piensa", isOn: $settings.showThinking)
                 Toggle("Mostrar información de la sesión al pasar el cursor", isOn: $settings.showHoverInfo)
                 Toggle("Mantener el orbe un momento al terminar", isOn: $settings.stayVisible)
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Dejar quietos los orbes en espera", isOn: $settings.restIdleOrbs)
+                    Text("Ahorra CPU y batería: la luz se detiene poco a poco y despierta al pasar el cursor, pensar o hablar.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Color del halo por agente") {

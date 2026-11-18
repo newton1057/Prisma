@@ -5,18 +5,6 @@
 import SwiftUI
 import AppKit
 
-enum OverlayPosition { case top, left, right, bottom, center, corner }
-
-/// ImageRenderer cannot draw NSVisualEffectView; render.sh swaps the app's
-/// VisualEffectBlur for this dark stand-in of the `.hudWindow` material.
-struct HarnessBlur: View {
-    var material: NSVisualEffectView.Material
-    var blendingMode: NSVisualEffectView.BlendingMode
-    var cornerRadius: CGFloat
-    var alpha: CGFloat = 0.45
-    var body: some View { Color(white: 0.12).opacity(Double(alpha)) }
-}
-
 /// Deterministic, speech-like level in 30 Hz steps with the same attack and
 /// release smoothing as SpeechSession's meter.
 struct SyntheticVoice {
@@ -77,8 +65,12 @@ struct Harness {
         model.clock = { virtualNow }
         model.idlePhase = 2.37
         model.visible = true
-        // Settle in the waiting state long before the recording starts.
-        virtualNow = base - 10
+        // Only `rest` lets the waiting light come to rest; the other scenarios
+        // keep it moving so they show the same motion as before resting existed.
+        model.restsWhenIdle = scenario == "rest"
+        // Settle in the waiting state before the recording starts; `rest`
+        // starts drifting just before it.
+        virtualNow = base - (scenario == "rest" ? 1.5 : 10)
         model.hasIdleState = true
         virtualNow = base
 
@@ -101,8 +93,19 @@ struct Harness {
                 Event(at: 2.0) { $0.isThinking = true },
             ]
             duration = 4.0
+        case "rest":
+            let settle = OverlayModel.restDelay + OverlayModel.settleDuration
+            let hover = settle - 1.5 + 1.4
+            let leave = hover + 1.5
+            let think = leave + settle + 0.9
+            events = [
+                Event(at: hover) { $0.isHovered = true },
+                Event(at: leave) { $0.isHovered = false },
+                Event(at: think) { $0.isThinking = true },
+            ]
+            duration = think + 2.0
         default:
-            print("unknown scenario \(scenario); use cycle, silent or interrupt")
+            print("unknown scenario \(scenario); use cycle, silent, interrupt or rest")
             return
         }
 

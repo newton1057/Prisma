@@ -1,0 +1,517 @@
+{
+  "date": "2026-11-17",
+  "metric": "Median of per-run medians, two alternating pairs, 11 detected session orbs",
+  "memory_unit": "bytes, kernel physical footprint",
+  "cpu_unit": "percent of one core",
+  "before_app": {
+    "bytes": 1989394,
+    "allocated_bytes": 2031616,
+    "binary_bytes": 1931920,
+    "sha256": "95863950cb21813261efeefcb4384c74f281b8223073d44a017a7ed91caaa75b"
+  },
+  "after_app": {
+    "bytes": 2096338,
+    "binary_bytes": 2038864,
+    "sha256": "86084b2f1c92a46fc3063175ef66201c955332539aa21c5bf0014153774f2d6e"
+  },
+  "scenarios": {
+    "thinking-1": {
+      "before": {
+        "cpu_percent": 10.980205505762049,
+        "footprint_bytes": 123040776.0,
+        "runs": [
+          {
+            "cpu_percent": 11.970692369077035,
+            "footprint_bytes": 142156880.0,
+            "active_fps": 59.881575792355115,
+            "orb_counts": [
+              11
+            ]
+          },
+          {
+            "cpu_percent": 9.989718642447063,
+            "footprint_bytes": 103924672.0,
+            "active_fps": 59.9992937561412,
+            "orb_counts": [
+              11
+            ]
+          }
+        ]
+      },
+      "after": {
+        "cpu_percent": 9.214406722311463,
+        "footprint_bytes": 111539184.0,
+        "runs": [
+          {
+            "cpu_percent": 9.519538573238068,
+            "footprint_bytes": 119522336.0,
+            "active_fps": 60.00014375023906,
+            "orb_counts": [
+              11
+            ]
+          },
+          {
+            "cpu_percent": 8.909274871384856,
+            "footprint_bytes": 103556032.0,
+            "active_fps": 59.99958000678185,
+            "orb_counts": [
+              11
+            ]
+          }
+        ]
+      }
+    },
+    "thinking-3": {
+      "before": {
+        "cpu_percent": 14.032650743403481,
+        "footprint_bytes": 131634184.0,
+        "runs": [
+          {
+            "cpu_percent": 11.489523389430172,
+            "footprint_bytes": 159310928.0,
+            "active_fps": 58.401138321910345,
+            "orb_counts": [
+              11
+            ]
+          },
+          {
+            "cpu_percent": 16.57577809737679,
+            "footprint_bytes": 103957440.0,
+            "active_fps": 59.999472506831786,
+            "orb_counts": [
+              11
+            ]
+          }
+        ]
+      },
+      "after": {
+        "cpu_percent": 13.923159665929093,
+        "footprint_bytes": 111133692.0,
+        "runs": [
+          {
+            "cpu_percent": 12.549355622640604,
+            "footprint_bytes": 119571512.0,
+            "active_fps": 59.99854003564846,
+            "orb_counts": [
+              11
+            ]
+          },
+          {
+            "cpu_percent": 15.296963709217582,
+            "footprint_bytes": 102695872.0,
+            "active_fps": 59.99956750498267,
+            "orb_counts": [
+              11
+            ]
+          }
+        ]
+      }
+    },
+    "thinking-6": {
+      "before": {
+        "cpu_percent": 19.573707304402056,
+        "footprint_bytes": 144409608.0,
+        "runs": [
+          {
+            "cpu_percent": 16.936119827963388,
+            "footprint_bytes": 181544016.0,
+            "active_fps": 57.046942499971294,
+            "orb_counts": [
+              11
+            ]
+          },
+          {
+            "cpu_percent": 22.211294780840724,
+            "footprint_bytes": 107275200.0,
+            "active_fps": 60.00094001024951,
+            "orb_counts": [
+              11
+            ]
+          }
+        ]
+      },
+      "after": {
+        "cpu_percent": 19.596332838428758,
+        "footprint_bytes": 114799600.0,
+        "runs": [
+          {
+            "cpu_percent": 18.285983582439393,
+            "footprint_bytes": 121398304.0,
+            "active_fps": 60.000887520021536,
+            "orb_counts": [
+              11
+            ]
+          },
+          {
+            "cpu_percent": 20.906682094418123,
+            "footprint_bytes": 108200896.0,
+            "active_fps": 59.99999124818451,
+            "orb_counts": [
+              11
+            ]
+          }
+        ]
+      }
+    },
+    "returned-idle": {
+      "before": {
+        "cpu_percent": 0.5078988383299754,
+        "footprint_bytes": 64381948.0,
+        "runs": [
+          {
+            "cpu_percent": 0.5820792299925667,
+            "footprint_bytes": 79873080.0,
+            "active_fps": 0,
+            "orb_counts": [
+              11
+            ]
+          },
+          {
+            "cpu_percent": 0.43371844666738407,
+            "footprint_bytes": 48890816.0,
+            "active_fps": 0,
+            "orb_counts": [
+              11
+            ]
+          }
+        ]
+      },
+      "after": {
+        "cpu_percent": 0.27988455311774274,
+        "footprint_bytes": 56148976.0,
+        "runs": [
+          {
+            "cpu_percent": 0.26141282313048814,
+            "footprint_bytes": 61277216.0,
+            "active_fps": 0,
+            "orb_counts": [
+              11
+            ]
+          },
+          {
+            "cpu_percent": 0.29835628310499734,
+            "footprint_bytes": 51020736.0,
+            "active_fps": 0,
+            "orb_counts": [
+              11
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "visual": {
+    "cycle": {
+      "frames": 44,
+      "mean_absolute_channel_difference_0_255": 0.0,
+      "maximum_channel_difference_0_255": 0
+    },
+    "interrupt": {
+      "frames": 30,
+      "mean_absolute_channel_difference_0_255": 0.0,
+      "maximum_channel_difference_0_255": 0
+    },
+    "rest": {
+      "frames": 83,
+      "mean_absolute_channel_difference_0_255": 0.0,
+      "maximum_channel_difference_0_255": 0
+    }
+  },
+  "long_run_status": "recording, not yet a completed 24-hour verification",
+  "observation": {
+    "started_utc": "2026-11-17T19:22:35.252783+00:00",
+    "expected_end_utc": "2026-11-18T19:22:35.252783+00:00",
+    "samples_seen": 539,
+    "last_sample_utc": "2026-11-18T04:20:47.636743+00:00",
+    "sample_interval_seconds": 60,
+    "heap_interval_seconds": 21600,
+    "log": "../tmp/performance-2026-11-17/soak-24h.jsonl",
+    "elapsed_hours": 8.97,
+    "dispatch_source_checks": [
+      {
+        "elapsed_seconds": 0.00011683395132422447,
+        "objects": 416
+      },
+      {
+        "elapsed_seconds": 21607.933760875138,
+        "objects": 213
+      }
+    ]
+  },
+  "installed_sha256": "86084b2f1c92a46fc3063175ef66201c955332539aa21c5bf0014153774f2d6e",
+  "smaller_orb_windows": {
+    "before_app": {
+      "bytes": 2096338,
+      "sha256": "86084b2f1c92a46fc3063175ef66201c955332539aa21c5bf0014153774f2d6e"
+    },
+    "after_app": {
+      "bytes": 2096690,
+      "sha256": "c974a0ffaaaa2b23a0c9e02390cc004c219364b459a828ec859ef3c4d063f81c"
+    },
+    "session_orbs": 13,
+    "position": "bottom",
+    "repeats": 2,
+    "warmup_seconds": 13,
+    "sampling_seconds": 15,
+    "cpu_unit": "percent of one core",
+    "ram_unit": "decimal MB, physical footprint",
+    "stages": {
+      "thinking-1": {
+        "before": {
+          "cpu": 7.821307703744346,
+          "ram_MB": 109.98266799999999,
+          "fps": 60.000083750892
+        },
+        "after": {
+          "cpu": 7.517936418339385,
+          "ram_MB": 107.27110400000001,
+          "fps": 59.99966312744247
+        }
+      },
+      "thinking-6": {
+        "before": {
+          "cpu": 15.837086006975806,
+          "ram_MB": 111.19918,
+          "fps": 59.99959750422532
+        },
+        "after": {
+          "cpu": 15.401973802872519,
+          "ram_MB": 112.939968,
+          "fps": 59.99922284475092
+        }
+      },
+      "returned-idle": {
+        "before": {
+          "cpu": 0.30691218763690487,
+          "ram_MB": 54.477772,
+          "fps": 0.0
+        },
+        "after": {
+          "cpu": 0.3046294322154375,
+          "ram_MB": 52.585408,
+          "fps": 0.0
+        }
+      }
+    }
+  },
+  "layer_separation_and_earlier_rest": {
+    "pairs": {
+      "after-1": {
+        "settle-6": {
+          "prisma_cpu_percent": 0.4822977693979437,
+          "ram_mb": 95.58536,
+          "window_server_cpu_percent": 27.85679431265575,
+          "fps": 36.00177683897875,
+          "prisma_cpu_seconds_15s": 0.8075015013658254,
+          "frame_updates_15s": 1410,
+          "first_all_resting_s": 5.992039083270356,
+          "end_of_stage_ram_mb": 94.782544
+        },
+        "thinking-6": {
+          "prisma_cpu_percent": 14.546525437572729,
+          "ram_mb": 188.589136,
+          "window_server_cpu_percent": 36.789689448864806,
+          "fps": 59.98965598505525
+        }
+      },
+      "after-2": {
+        "settle-6": {
+          "prisma_cpu_percent": 0.6818995363157377,
+          "ram_mb": 94.127208,
+          "window_server_cpu_percent": 27.853735325615897,
+          "fps": 36.00097882364313,
+          "prisma_cpu_seconds_15s": 0.8319383703204287,
+          "frame_updates_15s": 1424,
+          "first_all_resting_s": 5.985881875036284,
+          "end_of_stage_ram_mb": 93.2916
+        },
+        "thinking-6": {
+          "prisma_cpu_percent": 14.440315973086616,
+          "ram_mb": 186.8852,
+          "window_server_cpu_percent": 36.847481458769124,
+          "fps": 60.000350002778845
+        }
+      },
+      "before-1": {
+        "settle-6": {
+          "prisma_cpu_percent": 10.878930861569973,
+          "ram_mb": 207.57,
+          "window_server_cpu_percent": 31.81461781111385,
+          "fps": 36.000247502538436,
+          "prisma_cpu_seconds_15s": 1.3391736425608856,
+          "frame_updates_15s": 2497,
+          "first_all_resting_s": 10.995492458343506,
+          "end_of_stage_ram_mb": 95.732816
+        },
+        "thinking-6": {
+          "prisma_cpu_percent": 14.385577326059781,
+          "ram_mb": 188.27784,
+          "window_server_cpu_percent": 37.73230358225251,
+          "fps": 59.99596025814594
+        }
+      },
+      "before-2": {
+        "settle-6": {
+          "prisma_cpu_percent": 10.94426657579277,
+          "ram_mb": 190.923832,
+          "window_server_cpu_percent": 30.81126711945306,
+          "fps": 35.99986499319192,
+          "prisma_cpu_seconds_15s": 1.34681349209944,
+          "frame_updates_15s": 2493,
+          "first_all_resting_s": 10.99900604179129,
+          "end_of_stage_ram_mb": 96.404536
+        },
+        "thinking-6": {
+          "prisma_cpu_percent": 14.40637350205185,
+          "ram_mb": 189.711416,
+          "window_server_cpu_percent": 34.87023128274489,
+          "fps": 59.999687507365124
+        }
+      }
+    },
+    "before": {
+      "settle-6": {
+        "prisma_cpu_percent": 10.911598718681372,
+        "ram_mb": 199.246916,
+        "window_server_cpu_percent": 31.312942465283456,
+        "fps": 36.000056247865174,
+        "prisma_cpu_seconds_15s": 1.3429935673301627,
+        "frame_updates_15s": 2495.0,
+        "first_all_resting_s": 10.997249250067398,
+        "end_of_stage_ram_mb": 96.068676
+      },
+      "thinking-6": {
+        "prisma_cpu_percent": 14.395975414055815,
+        "ram_mb": 188.994628,
+        "window_server_cpu_percent": 36.301267432498705,
+        "fps": 59.99782388275553
+      }
+    },
+    "after": {
+      "settle-6": {
+        "prisma_cpu_percent": 0.5820986528568407,
+        "ram_mb": 94.85628399999999,
+        "window_server_cpu_percent": 27.855264819135826,
+        "fps": 36.00137783131094,
+        "prisma_cpu_seconds_15s": 0.8197199358431271,
+        "frame_updates_15s": 1417.0,
+        "first_all_resting_s": 5.98896047915332,
+        "end_of_stage_ram_mb": 94.037072
+      },
+      "thinking-6": {
+        "prisma_cpu_percent": 14.493420705329672,
+        "ram_mb": 187.737168,
+        "window_server_cpu_percent": 36.818585453816965,
+        "fps": 59.99500299391705
+      }
+    },
+    "diagnostics": {
+      "full-1": {
+        "thinking-6": {
+          "prisma_cpu_percent": 14.504524590890185,
+          "ram_mb": 188.867664,
+          "window_server_cpu_percent": 35.72687193052491,
+          "fps": 59.98147197373288,
+          "visible_panels": 13
+        }
+      },
+      "full-2": {
+        "thinking-6": {
+          "prisma_cpu_percent": 14.648443672576391,
+          "ram_mb": 189.719632,
+          "window_server_cpu_percent": 35.31436144124095,
+          "fps": 60.0137862053616,
+          "visible_panels": 13
+        }
+      },
+      "no-beam": {
+        "thinking-6": {
+          "prisma_cpu_percent": 3.5419062649495867,
+          "ram_mb": 62.112728,
+          "window_server_cpu_percent": 32.7527789540126,
+          "fps": 60.00036374886632,
+          "visible_panels": 13
+        }
+      },
+      "no-decor": {
+        "thinking-6": {
+          "prisma_cpu_percent": 14.237552238214878,
+          "ram_mb": 150.782984,
+          "window_server_cpu_percent": 34.79670574556682,
+          "fps": 60.001700819906304,
+          "visible_panels": 13
+        }
+      },
+      "shared-row": {
+        "thinking-6": {
+          "prisma_cpu_percent": 14.645256461807314,
+          "ram_mb": 190.301288,
+          "window_server_cpu_percent": 38.80060495675825,
+          "fps": 59.99912751244663,
+          "visible_panels": 1
+        }
+      }
+    },
+    "before_app": {
+      "bytes": 2096690,
+      "sha256": "c974a0ffaaaa2b23a0c9e02390cc004c219364b459a828ec859ef3c4d063f81c"
+    },
+    "after_app": {
+      "bytes": 2125074,
+      "sha256": "04488223565b4e998f7856d6d0e02902e6a05d130fb63bcfb341d3b7a4d0ae88"
+    },
+    "session_orbs": 13,
+    "repeats": 2
+  },
+  "lower_cadence_experiment": {
+    "before": {
+      "runs": [
+        {
+          "cpu_percent": 19.543735327157446,
+          "ram_mb": 189.391928,
+          "fps": 47.07650078871459
+        },
+        {
+          "cpu_percent": 19.28631350158223,
+          "ram_mb": 188.949584,
+          "fps": 47.42730192190355
+        }
+      ],
+      "cpu_percent": 19.41502441436984,
+      "ram_mb": 189.17075599999998,
+      "fps": 47.25190135530907
+    },
+    "after": {
+      "runs": [
+        {
+          "cpu_percent": 17.721297921283345,
+          "ram_mb": 189.79336,
+          "fps": 36.00490344906264
+        },
+        {
+          "cpu_percent": 17.54574014650946,
+          "ram_mb": 189.891664,
+          "fps": 35.986957861023036
+        }
+      ],
+      "cpu_percent": 17.633519033896402,
+      "ram_mb": 189.842512,
+      "fps": 35.99593065504284
+    }
+  },
+  "release": {
+    "version": "1.0.7",
+    "build": 7,
+    "github_installers": {
+      "Prisma-1.0.7.dmg": {
+        "sha256": "dbb3c76f7a5179087bd2acf8ab96107ed7bcedd3e4b159f3a36a5aee75114986",
+        "bytes": 677736
+      },
+      "Prisma-Windows-1.0.7.zip": {
+        "sha256": "3426228f371a0b6d0094844e72b098f43135956a2bf4b4dad8c0a2d635127a0d",
+        "bytes": 67295
+      }
+    },
+    "mac_app_bytes": 2125074
+  }
+}

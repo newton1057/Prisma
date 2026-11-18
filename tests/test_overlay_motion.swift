@@ -17,7 +17,124 @@ struct TestOverlayMotion {
         testLoopIsSeamless()
         testVoiceHorizonStaysCentred()
         testRowSlide()
+        testRest()
+        testDisplaySuspension()
         print("Overlay motion continuity passed")
+    }
+
+    static func testDisplaySuspension() {
+        var now = 8_000.0
+        let model = OverlayModel()
+        model.clock = { now }
+        model.hasIdleState = true
+        model.isThinking = true
+        model.visible = true
+        _ = model.frame(at: now)
+        now += 0.02
+        let before = model.frame(at: now)
+        model.setRenderingSuspended(true)
+        precondition(model.isRenderingSuspended)
+        now += 600
+        model.isThinking = false
+        model.isSpeaking = true
+        model.setRenderingSuspended(false)
+        let after = model.frame(at: now)
+        precondition(after.time == before.time && after.spin == before.spin,
+                     "resuming must not integrate the time spent off screen")
+        precondition(after.voice > 0.999 && !model.isResting,
+                     "state changes while suspended must be ready when the screen wakes")
+        now += 0.02
+        precondition(model.frame(at: now).time > after.time)
+    }
+
+    /// A waiting orb drifts for `restDelay`, slows its light to a stop without
+    /// a jump, pauses, and wakes up smoothly when it becomes active again.
+    static func testRest() {
+        var now = 6_000.0
+        let model = OverlayModel()
+        model.clock = { now }
+        model.hasIdleState = true      // waiting from the start (hidden: no morph)
+        model.visible = true
+        precondition(!model.isResting, "a new orb should not start at rest")
+
+        let dt = 1.0 / 60
+        let wake = 13.0
+        let leave = 14.5
+        var clocks: [Double] = []
+        var spins: [Double] = []
+        var restedAt: Double?
+        var i = 0
+        while Double(i) * dt <= 30 {
+            let t = Double(i) * dt
+            now = 6_000 + t
+            if abs(t - wake) < dt / 2 { model.isHovered = true }
+            if abs(t - leave) < dt / 2 { model.isHovered = false }
+            let f = model.frame(at: now)
+            clocks.append(f.time)
+            spins.append(f.spin)
+            // The app checks on a timer; here every frame checks.
+            model.restIfSettled()
+            if model.isResting, restedAt == nil { restedAt = t }
+            if !model.isResting, restedAt != nil, t < wake { preconditionFailure("rest ended without activity at \(t)s") }
+            i += 1
+        }
+        let rates = zip(clocks.dropFirst(), clocks).map { ($0 - $1) / dt }
+
+        func rate(at t: Double) -> Double { rates[Int((t / dt).rounded())] }
+        precondition(abs(rate(at: 1) - 1) < 1e-9 && abs(rate(at: OverlayModel.restDelay - 0.1) - 1) < 1e-9,
+                     "a waiting orb should drift at full speed first")
+        let settled = OverlayModel.restDelay + OverlayModel.settleDuration
+        precondition(rate(at: settled + 0.05) == 0 && rate(at: wake - 0.05) == 0, "the light should stand still at rest")
+        precondition(abs(spins[Int(((wake - 0.05) / dt).rounded())] - spins[Int(((settled + 0.05) / dt).rounded())]) < 1e-12,
+                     "colours should stand still at rest")
+        let restTime = restedAt ?? .infinity
+        precondition(restTime >= settled && restTime < settled + 0.1, "the timeline should pause right after the light stops, got \(restTime)s")
+        precondition(rate(at: wake + OverlayModel.wakeDuration + 0.05) > 0.999, "a hovered orb should move at full speed")
+        for k in 1..<rates.count {
+            // The quintic slows down at most ~0.72/s and wakes at ~2.3/s:
+            // 0.04 per frame at 60 fps.
+            precondition(abs(rates[k] - rates[k - 1]) < 0.05, "the light changed speed abruptly at \(Double(k) * dt)s")
+        }
+        // After the pointer leaves, the orb drifts again before resting anew.
+        precondition(rate(at: leave + OverlayModel.restDelay / 2) > 0.999, "the orb should drift after it is left alone")
+        precondition(model.isResting, "the orb should rest again after the drift and braking interval")
+
+        // An orb that appears again draws its entrance and drifts before resting anew.
+        model.transitionFrom = 1
+        model.transitionTo = 1
+        model.transitionStartTime = now
+        model.transitionDuration = 0.18
+        model.presentationChanged()
+        precondition(!model.isResting, "an orb that appears should draw its entrance")
+        var previous = model.frame(at: now).time
+        var speed = 0.0
+        for _ in 0..<Int(1.5 / dt) {
+            now += dt
+            let time = model.frame(at: now).time
+            precondition(abs((time - previous) / dt - speed) < 0.05, "the light jumped when the orb appeared")
+            speed = (time - previous) / dt
+            previous = time
+            model.restIfSettled()
+            precondition(!model.isResting, "an orb that appears should drift before resting")
+        }
+        precondition(speed > 0.999, "an orb that appears should drift at full speed")
+
+        // With resting turned off, waiting orbs keep moving.
+        now = 7_000
+        let moving = OverlayModel()
+        moving.clock = { now }
+        moving.restsWhenIdle = false
+        moving.hasIdleState = true
+        moving.visible = true
+        var last = moving.frame(at: now).time
+        for k in 1...(60 * 20) {
+            now = 7_000 + Double(k) * dt
+            let time = moving.frame(at: now).time
+            precondition(abs((time - last) / dt - 1) < 1e-9, "an orb that does not rest should always move")
+            last = time
+            moving.restIfSettled()
+            precondition(!moving.isResting, "an orb that does not rest should never pause")
+        }
     }
 
     static func testHaloThemes() {

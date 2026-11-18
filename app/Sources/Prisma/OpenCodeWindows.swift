@@ -19,15 +19,11 @@ enum OpenCodeWindows {
 
     /// Window processes in `ps -axo pid=,args=` output.
     static func candidates(in processList: String) -> [Int32] {
-        var pids: [Int32] = []
-        for line in processList.split(separator: "\n") {
-            let fields = line.split(whereSeparator: \.isWhitespace).map(String.init)
-            guard fields.count >= 2, let pid = Int32(fields[0]),
-                  URL(fileURLWithPath: fields[1]).lastPathComponent == "opencode",
-                  opensWindow(Array(fields.dropFirst(2))) else { continue }
-            pids.append(pid)
-        }
-        return pids
+        candidates(in: AgentProcess.parse(processList))
+    }
+
+    static func candidates(in processes: [AgentProcess]) -> [Int32] {
+        processes.filter { $0.executable == "opencode" && opensWindow($0.arguments) }.map(\.pid)
     }
 
     /// The first known subcommand decides; option values and a project path
@@ -43,7 +39,11 @@ enum OpenCodeWindows {
     /// Open windows and their folders. Helper processes started by a window
     /// are part of that window, not windows of their own.
     static func windows(in processList: String) -> [Int32: String] {
-        let pids = candidates(in: processList)
+        windows(in: AgentProcess.parse(processList))
+    }
+
+    static func windows(in processes: [AgentProcess]) -> [Int32: String] {
+        let pids = candidates(in: processes)
         let all = Set(pids)
         var result: [Int32: String] = [:]
         for pid in pids where !all.contains(parent(of: pid)) {

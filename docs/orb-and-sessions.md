@@ -25,7 +25,7 @@ This document describes how the macOS orb is drawn and animated, how the row of 
 | `app/Sources/Prisma/AppDelegate.swift` | Session registry: which orb belongs to which session, process monitors, speech queue. |
 | `app/Sources/Prisma/AgentConnections.swift` | Connects Prisma with Codex, Claude Code, OpenCode, Muse Code and Antigravity from Ajustes: status, hooks, plugins, Codex hook trust. |
 | `app/Sources/Prisma/HTTPServer.swift` | Local API used by the hooks. |
-| `app/Sources/Prisma/CodexSessionsMonitor.swift` | `ps` snapshot; detects `codex resume <id>` clients. |
+| `app/Sources/Prisma/CodexSessionsMonitor.swift` | In-process table of agent processes (`KERN_PROCARGS2`, native argv; text adapter for `ps` QA); detects `codex resume <id>` clients. |
 | `app/Sources/Prisma/ClaudeCodeWindows.swift` | Detects open Claude Code windows (and a session named with `--resume`). |
 | `app/Sources/Prisma/OpenCodeWindows.swift` | Detects open OpenCode windows and their folders. |
 | `app/Sources/Prisma/MuseWindows.swift` | Detects open Muse Code windows (and a session named with a UUID). |
@@ -56,17 +56,33 @@ This document describes how the macOS orb is drawn and animated, how the row of 
 
 ### 3.2 Values integrated per frame
 
-`OrbMotion` advances with the real time between frames (capped at 0.1 s):
+`OrbMotion` advances with the real time between frames (capped at 0.1 s), scaled by the orb's `pace` (section 3.4):
 
+- `clock`, the light's own time. `OrbFrame.time` is this clock, not the wall clock; every analytic motion (waves, breathing, folds, ring radius) reads it.
 - `spin`, the colour rotation: 0.03, 0.1035 and 0.038 turns per second for voice, thinking and waiting.
 - `sweep`, the bright region travelling around the loop: 0.75, 1.40 and 0.75 rad/s.
-- `audio`, the meter smoothed every frame (rise rate 24/s, fall 9/s); the meter itself updates at 30 Hz.
+- `audio`, the meter smoothed every frame with the unscaled time (rise rate 24/s, fall 9/s); the meter itself updates at 30 Hz.
 
-Changing state changes the speeds, never the phases, so the light keeps travelling instead of jumping. Everything else is an analytic function of time.
+Changing state changes the speeds, never the phases, so the light keeps travelling instead of jumping. Everything else is an analytic function of `clock`. Pose, size, hover and entrance blends still run on the wall clock.
+
+Sampling coordinates and voice tapers are static. Loop-only poses reuse the
+same sampled colours across bands inside each canvas, instead of constructing
+the same colours seven times. Colour work skips an absent voice/loop component. A uniformly
+black smoked-interior mask is omitted outside the visible voice state. Band
+counts, outline samples, blend modes and frame intervals are unchanged.
 
 ### 3.3 Frame rate
 
-`TimelineView(.animation(minimumInterval:))` uses **1/90 s** while thinking, speaking or morphing and **1/36 s** otherwise. That gives 60 fps and 30 fps on 60 Hz displays and 60 fps and 30–36 fps on ProMotion displays. Do not use exactly 1/60 s: display jitter then skips about every other frame (measured 31–38 fps). `audioLevel` is deliberately not `@Published`; the timeline reads it, so the 30 Hz meter does not add uneven redraws.
+`TimelineView(.animation(minimumInterval:))` uses **1/90 s** while thinking, speaking or morphing and **1/36 s** otherwise. That gives 60 fps and 30 fps on 60 Hz displays and 60 fps and 30–36 fps on ProMotion displays. Do not use exactly 1/60 s: display jitter then skips about every other frame (measured 31–38 fps). `audioLevel` is deliberately not `@Published`; the timeline reads it, so the 30 Hz meter does not add uneven redraws. A resting orb (section 3.4) pauses the timeline altogether.
+
+### 3.4 Resting
+
+A waiting orb that is not hovered (`isActive == false`) drifts at full speed for `restDelay` (3 s). Its `pace` then eases from 1 to 0 over `settleDuration` (2.6 s) with the same quintic `SmoothBlend`, so the light slows to a stop instead of freezing. Once the pace is 0 and no morph or entrance is running, `restIfSettled()` publishes `isResting` and the `TimelineView` pauses with the last frame visible. Thinking, speaking or hovering wakes it: `isResting` clears at once and the pace eases back to 1 over `wakeDuration` (0.8 s) while the pose morph starts.
+
+- The settle is applied lazily by `frame(at:)` (or `stateChanged`) but always at the time it was due (`idleSince + restDelay`), so it does not depend on when frames are drawn.
+- `restIfSettled()` runs on a main-queue timer; it waits for `morphingUntil` and the entrance (`transitionStartTime + transitionDuration`) and reschedules itself. `OverlayController.show()` and `hide()` call `presentationChanged()` so entrances and exits always draw.
+- **Ajustes → Animación → Dejar quietos los orbes en espera** (`restIdleOrbs`, on by default) sets `restsWhenIdle`; off keeps every waiting orb moving as before.
+- Why: with 13 sessions open for three days, the waiting orbs alone kept the main thread busy and RenderBox's `SurfacePool` queue fell behind for good: about 300,000 pending `dispatch_after` timers and one core spent in `RB::SurfacePool::collect` (2026-11-16, `heap` + `sample`). Prisma used 210–250 % CPU.
 
 ## 4. The orb view
 
@@ -106,12 +122,22 @@ Measured with seven waiting orbs on the main thread (`sample`): CPU went from ab
 - Never scale or resize `NSVisualEffectView` per frame. A per-frame `scaleEffect` on the glass made it re-render its material and re-apply its mask image on every frame. Only the light breathes.
 - Do not reassign `NSVisualEffectView` properties in `updateNSView` unless they changed. `MaskedVisualEffectView` rebuilds its mask only when its size or corner radius changes.
 - Prefer animating opacity over gradient colours: a gradient whose colours change every frame is re-encoded, colour space included.
+- Keep the rim, side highlights, shadow and theme-coloured aura in equatable views. Their geometry stays fixed while the beam and aura opacity animate.
 - Remove layers of a pose with no weight (`if frame.voice > 0.001`).
 - Pose features with no weight are skipped in `outline(_:)`.
+- Let idle orbs rest (section 3.4). A visible orb that redraws forever costs about 4 % CPU even when nothing changes, and many of them overload RenderBox's surface pool over hours.
+- Do not set `@Published` model properties to the same value on a timer: each set redraws the orb, even a resting one.
 
 ## 5. Row layout and sliding
 
 `OverlayController.position` gives waiting (inactive) orbs a 78 pt slot (scale `0.34`, ~67 pt diameter, opacity `0.50`) and active orbs—thinking, speaking, or hovered by the pointer—a 110 pt slot (scale `0.50`, ~99 pt diameter, opacity `0.95`). Both states use a translucent smoked-glass interior and softened backdrop blur so the menu bar and windows behind the orbs remain visible. When a specific orb becomes active or hovered, it smoothly expands and brightens while its neighbours slide 16 pt aside to keep an even ~11 pt gap; all other idle orbs remain compact and semi-transparent. A row is centred at the top (or bottom or centre); in the corner setting it is right-aligned. Rows wrap when the screen is full.
+
+`OrbViewport` gives each placement a smaller native window while the hosting
+view keeps its 460 × 360 pt layout. The panel origin includes the viewport
+offset. The hosted drawing and pointer hit tests subtract that same offset.
+When changing placement, a single settings subscription updates the row and
+its hover region together. The native window resizes once per placement
+change. The bounds cover the expanded orb, badge, glow, entrance and exit.
 
 - **One screen per row & display selection.** `AppDelegate.arrangeSessions` sets `rowScreen` on every orb from `settings.resolvedScreen()` (which can target any connected physical display by `CGDirectDisplayID`, the active display, or the pointer display). Pressing the global screen shortcut (`⌃⌥M` by default, configurable in **Ajustes → Animación → Atajo para cambiar pantalla**) cycles directly to the next connected monitor and moves the entire row or column there at once.
 - **Click to focus terminal & fused hover info chip.** While the pointer hovers inside an orb's circle, `OverlayController.setInteractive(true)` enables mouse hit-testing on that panel alone and—when `settings.showHoverInfo` is enabled—`OrbInfoBadgeView` unfolds directly fused to the orb container without separating (`hoverBadge` `SmoothBlend`, 14 pt inner margin from the orb rim), showing the session title on top and the agent indicator + name (`Codex`, `Claude Code`, `OpenCode`, `Muse Code` or `Antigravity` in the agent's `HaloTheme` palette) below, left-aligned in a Consolas-style monospaced font. Clicking the orb runs `AppDelegate.focusSession(_:)`, which resolves the agent process's controlling TTY (`proc_pidinfo` + `devname`) and activates the owning terminal app and tab (`Terminal.app` or `iTerm2`).
@@ -197,12 +223,22 @@ OpenCode 2.x runs plugins inside one shared background service (`opencode serve 
 
 ### 6.8 Monitors
 
-Every 2 s a background timer takes one `ps -axo pid=,args=` snapshot and then, on the main thread:
+Every 2 s a background timer (150 ms leeway) reads native agent argv (`CodexSessionsMonitor.agentProcesses()`: `proc_listallpids` and `KERN_PROCARGS2`). `AgentProcessSnapshot` groups records by executable once and detects all five agents without serializing argv back to text. It then applies the snapshot on the main thread:
 
 1. Updates `codex resume` sessions.
 2. Ends Claude Code, OpenCode, Muse Code and Antigravity orbs whose window process has exited.
 3. Gives new Claude Code, OpenCode, Muse Code and Antigravity windows their orbs, and ends idle OpenCode orphans.
-4. Checks the transcripts of thinking Claude Code orbs.
+4. Schedules bounded transcript checks on a separate utility queue. A generation and offset check discard results from a previous turn.
+
+Existing resumed Codex orbs do not re-resolve metadata on every tick. `SessionMetadataResolver` batches requests on a serial utility queue, caches missing Claude transcripts for 30 s, caches transcript paths and file stamps, and checks the Codex title index once per batch interval. Hovered titles refresh on the monitor tick; only changed titles are published. Closed or handed-over sessions invalidate pending results and cached titles.
+
+Pointer events are coalesced. The 80 ms hover timer exists only while the pointer is near a moving row; a stationary row has no periodic hover timer. Cached window bounds reject distant pointers, and only the old and new hovered orbs change state.
+
+Screen lock, screen sleep, system sleep and inactive login sessions pause every orb timeline and stop the session monitor. Resuming resets the motion timestamp (without integrating the hidden interval), reconciles processes immediately and restores pointer tracking. Speech playback remains independent of rendering availability. The public
+workspace notifications cover sleep and user-session switching; lock/unlock
+additionally observes loginwindow's undocumented distributed notifications
+(`com.apple.screenIsLocked` / `com.apple.screenIsUnlocked`). Their flags are
+independent so waking a display cannot resume a still-locked session.
 
 ### 6.9 Connecting agents from Ajustes
 
@@ -227,16 +263,16 @@ Requests are spoken one at a time in arrival order on the orb of their session (
 ### 8.1 Automated tests
 
 ```bash
-# Animation continuity: pose weights under random interruptions, beam geometry, seamless loop, row slide
+# Animation continuity: pose weights under random interruptions, beam geometry, seamless loop, row slide, resting
 swiftc -O -swift-version 5 -parse-as-library app/Sources/Prisma/OverlayView.swift \
   app/Sources/Prisma/SettingsStore.swift tests/test_overlay_motion.swift -o /tmp/prisma-motion && /tmp/prisma-motion
 
 # Window detection for Claude Code, OpenCode, Muse Code and Antigravity
-swiftc -parse-as-library app/Sources/Prisma/OpenCodeWindows.swift app/Sources/Prisma/ClaudeCodeWindows.swift \
+swiftc -parse-as-library app/Sources/Prisma/CodexSessionsMonitor.swift app/Sources/Prisma/OpenCodeWindows.swift app/Sources/Prisma/ClaudeCodeWindows.swift \
   app/Sources/Prisma/MuseWindows.swift app/Sources/Prisma/AntigravityWindows.swift \
   tests/test_agent_windows.swift -o /tmp/prisma-windows && /tmp/prisma-windows
 
-# codex resume detection
+# codex resume detection; the in-process agent process table matches `ps`
 swiftc app/Sources/Prisma/CodexSessionsMonitor.swift tests/test_codex_sessions_monitor.swift \
   -o /tmp/prisma-codex && /tmp/prisma-codex
 
@@ -254,9 +290,15 @@ node tests/test_opencode_flow.mjs
 (cd app && swift test)
 ```
 
+The extended performance/concurrency checks (metadata cache, native snapshot,
+transcript reads, display suspension), all existing checks, and Swift package
+tests can be run with `bash tools/performance/check.sh`. See
+[performance tools](../tools/performance/README.md) for reproducible native
+CPU/RAM/frame measurements and before/after contact sheets.
+
 ### 8.2 Offline renderer
 
-`tools/orb-renderer` draws the orb frame by frame through a scripted sequence (`cycle`: waiting → thinking at 1.0 s → voice at 3.6 s → waiting at 6.6 s; `silent`: the same without audio; `interrupt`: rapid changes):
+`tools/orb-renderer` draws the orb frame by frame through a scripted sequence (`cycle`: waiting → thinking at 1.0 s → voice at 3.6 s → waiting at 6.6 s; `silent`: the same without audio; `interrupt`: rapid changes; `rest`: braking starts at 1.5 s, the waiting light stops at 4.1 s, wakes when hovered at 5.5 s and wakes into thinking at 13.5 s):
 
 ```bash
 tools/orb-renderer/render.sh /tmp/orb 30 cycle

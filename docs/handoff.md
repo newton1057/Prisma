@@ -1,6 +1,6 @@
 # Handoff: orb animation and session orbs
 
-Date: 2026-11-10
+Date: 2026-11-17
 For: the next agent continuing work on Prisma (macOS)
 Technical reference: [Orb animation and session orbs](orb-and-sessions.md)
 
@@ -14,7 +14,8 @@ Technical reference: [Orb animation and session orbs](orb-and-sessions.md)
 - **Windows 1.0.3 released (updater).** Tag `windows-v1.0.3`; `Prisma-Windows-1.0.3.zip` is in [Releases](https://github.com/newton1057/Prisma/releases/tag/windows-v1.0.3) (SHA-256 `ded494d327d287d87e9aca33b84bc55d002a36ddd5e3b6f943bf057a3dbfd85a`). It is marked Latest because it is the most recently published release; GitHub keeps only one, so macOS `v1.0.2` lost that badge. This is the first Windows version with the signed bucket updater: it checks `windows-latest.json` at launch and every six hours, verifies the Ed25519 signature and the ZIP size/SHA-256, validates the version and build, and replaces the runtime after the app exits. Settings, the virtual environment and the voice model are preserved; a failed requirement install restores the previous runtime. **Ajustes → Actualizaciones** and the tray menu expose the check and the available version. 1.0.2 and earlier must install 1.0.3 by hand once. Published with `tools/publicar-windows.sh`.
 - **v1.0.4 released (unified).** Tag `v1.0.4`; one GitHub release carries `Prisma-1.0.4.dmg` for macOS and `Prisma-Windows-1.0.4.zip` for Windows (DMG SHA-256 `6a0b4ebdda8cda31419d70625a4da7c5720f3b82f2ae26141330a2bf625f1d04`; Windows ZIP SHA-256 `eec50145eccf0a35423493245908521b52500ddc51a8e706e5e32c5a2488febe`), marked Latest. Both apps share version 1.0.4 and build 4, and the bucket serves `latest.json` and `windows-latest.json` at build 4 (macOS bucket ZIP `f152ec8e94fe51dbf97bb85ab65d1caee8bde23013d41c7c889b6f2a907cfde7`). macOS 1.0.2 and Windows 1.0.3 update through the bucket; Windows 1.0.2 and earlier install by hand once. Published with the new shared `tools/publicar.sh`.
 - **v1.0.5 released (Muse Code + Antigravity).** Tag `v1.0.5`; one GitHub release carries `Prisma-1.0.5.dmg` (SHA-256 `12ca9b5c4cf3a6be3281ff7a1559ae34c5979e29f6ad86e987a2f1a162527aeb`) and `Prisma-Windows-1.0.5.zip` (SHA-256 `94705f3cc13e21b1978022ba87bd178eb9293f8ec48e8d33ddcdb0d6934b306b`), marked Latest. Both apps share 1.0.5 / build 5; the bucket serves `latest.json` and `windows-latest.json` at build 5 (macOS bucket ZIP `73e0034c82a51bf4ea693adeba6ae78d253cccc84da4baae08e4874c8d85e53e`). Verified: both signatures, sizes and hashes; the GitHub digest for the Windows ZIP equals the bucket hash; the macOS ZIP carries 1.0.5 / build 5 / `com.newton.prisma`, and the Windows ZIP carries `VERSION = '1.0.5'` / `BUILD = 5`, the updater files and the new agent integrations.
-- **v1.0.6 released (audio route recovery, speech watchdogs, session orb & Codex hook fixes).** Both macOS (`app/Info.plist`) and Windows (`windows/common.py`) share 1.0.6 / build 6; published with `tools/publicar.sh` to GitHub Releases (`v1.0.6`) and the `prisma-updates` bucket (`latest.json` and `windows-latest.json`). `~/Applications/Prisma.app` is installed and running at 1.0.6.
+- **v1.0.6 released (audio route recovery, speech watchdogs, session orb & Codex hook fixes).** Both macOS (`app/Info.plist`) and Windows (`windows/common.py`) share 1.0.6 / build 6; published with `tools/publicar.sh` to GitHub Releases (`v1.0.6`) and the `prisma-updates` bucket (`latest.json` and `windows-latest.json`). The local performance observation runs on a development build with version 1.0.6 and the first performance follow-up.
+- **v1.0.7 (build 7).** The macOS performance work below ships in version 1.0.7. Windows shares the version number and release page. See the [GitHub downloads](https://github.com/newton1057/Prisma/releases/tag/v1.0.7) and the [full performance report](performance-2026-11-17.md).
 - **Tests pass:** Swift (motion, themes, activity scale, window detection for all five agents, Codex monitor and `thread-writer-locks` `flock` check, agent connections including Muse Code and Antigravity, update manifest signature and SHA-256), Python (hooks including >120 KB Codex transcripts under `pipefail`; Windows app, speech watchdogs/mixer reset, orb renderer, layer packing, agent connections and signed updates, 66 tests), Node (OpenCode flow). Commands are in [section 8.1](orb-and-sessions.md#81-automated-tests) of the reference.
 
 ## 2. What was done
@@ -151,6 +152,41 @@ Technical reference: [Orb animation and session orbs](orb-and-sessions.md)
    - `windows/app.py`: adds synthesis/SAPI subprocess timeouts, `pygame.mixer` reinitialization on lost output devices, and a playback watchdog.
 3. **Verified and released (`v1.0.6`).** All Swift, Python (66) and Node tests pass; live check confirmed voice playback, temp cleanup and 5 waiting orbs matching open terminals.
 
+### Performance session (2026-11-16): Prisma at 210–250 % CPU
+
+1. **Measured on the installed 1.0.6** (PID 33228, three days up, 13 session orbs: seven `codex resume`, three Claude Code, three OpenCode windows; one of them thinking). `sample` and `heap` showed three costs:
+   - **Main thread ~100 %:** 13 waiting orbs redrawing forever at 30–36 fps (SwiftUI graph, `PrismaBeam`, RenderBox rendering on the main thread).
+   - **RenderBox `SurfacePool` queue ~100 % of a core:** `RB::SurfacePool::collect` re-arming `dispatch_after` timers. `heap` counted 278,509 live `dispatch_source_t` at 23:54:14 and 308,090 at 23:56:58 (+181/s): the queue had fallen behind for good, and only a restart clears it. Footprint 456–490 MB, 1.3 M malloc nodes.
+   - **Process monitor ~25 % of a core:** six parsers each splitting all ~730 `ps` lines and calling `URL(fileURLWithPath:)` (an `lstat`) per line: ~190 ms per 2 s tick, plus ~70 ms of `ps` itself (setuid, fork/exec).
+   - The audio engine was not a cost: no IO thread while silent, the meter tap is removed on teardown. Memory is a consequence of the backlog, not a separate leak.
+2. **Initial fixes (installed for testing on 2026-11-17).**
+   - `OverlayView.swift`: resting idle orbs ([section 3.4](orb-and-sessions.md#34-resting)). The light runs on its own clock (`OrbMotion.clock`, scaled by `pace`); a waiting orb drifts 8 s, slows to a stop over 2.6 s and pauses its `TimelineView` (`isResting`); hover, thinking or speech wake it over 0.8 s. `OverlayController` calls `presentationChanged()` from `show()`/`hide()`.
+   - `SettingsStore`/`SettingsView`: **Animación → Dejar quietos los orbes en espera** (`restIdleOrbs`, on by default).
+   - `CodexSessionsMonitor.agentProcessList()` replaces `processList()`: `proc_listallpids` + `KERN_PROCARGS2` in-process, keeping only agent executables (byte-level check of `argv[0]` before decoding), in the same `pid args…` format. ~14 ms CPU per tick instead of ~330 ms wall; same detections (7/3/3).
+   - Harness scenario `rest`; tests `testRest` (speed continuity, rest timing, wake, `restsWhenIdle = false`) and `testAgentProcessListMatchesPS` (live comparison with `ps`, retried).
+3. **Verified.** All Swift, Python (66), Node and `swift test` suites pass; `swift build -c release` and `app/build.sh` succeed. Frame by frame (`render.sh … rest`): the change per frame falls smoothly from ~0.5 to 0 during the settle and rises smoothly on wake; waking into thinking peaks at 3.07 (max jolt 0.33) against 3.19 (0.32) for the old moving waiting → thinking.
+4. **Installed and measured (2026-11-17).** The bundle was replaced the way `install.sh` does it (stop, copy, `open`); the previous binary is byte-identical to the one in `dist/Prisma-1.0.6.zip`, which serves for rollback. With 13 waiting orbs on screen, before → after:
+   - Prisma CPU 217–240 % → 0.6–1.0 %; in a 10 s `sample` the main thread was idle 98.7 % of the time. What remains is the 2 s monitor tick, the 80 ms hover timer and AppKit redrawing the status item's menu-bar copies.
+   - Live `dispatch_source_t` 294,693 and growing → 246, then 234 nine minutes later.
+   - Footprint 453 MB → 86–87 MB.
+   - WindowServer 54–56 % → 16–18 % (later 36–41 % while unrelated processes were busy).
+   - One test orb thinking (silent `POST /thinking` with `source: codex`, ended with `/session/end`): 8–13 % CPU. After `/interrupt` it waited at ~10 % and came to rest about 10 s later, as designed (8 s + 2.6 s).
+   - Speech played after the install, and the audio IO thread stopped when it ended.
+   - In real use (another Claude Code session finishing a turn every 1–2 min), Prisma peaked at 18–27 % CPU and 153 MB while its orb thought and spoke, then went back to 0.1–2.7 % and 89 MB; `dispatch_source_t` stayed at 244 after 26 minutes.
+5. **Long-running check.** Use `tools/performance/record.py` to compare memory and live dispatch-source counts over a day. For a silent active-orb check, `POST /thinking` on a test session with `source: codex`, measure, `POST /interrupt`, then `POST /session/end`. The final 1.0.7 rest interval is about 5.6 s.
+
+### Codex performance follow-up (2026-11-17)
+
+- Implemented the five requested follow-ups: loop-colour/static-sample reuse and removal of an identity mask, queued/cached session metadata and transcript reads, event-driven hover with a temporary motion timer, display/system/session/lock suspension, and grouped native argv detection with fewer unchanged-session updates.
+- The reference for this comparison is Claude's first optimized development build (`95863950…`). The original high-CPU 1.0.6 incident has a separate baseline in the preceding section.
+- Final comparison: two alternating pairs, 11 session orbs, at least 13 s warm-up and 15 s sampling per state. CPU: one thinking orb 10.98% → 9.21%; three 14.03% → 13.92%; six 19.57% → 19.60%; returned idle 0.51% → 0.28%. RAM: 123.0 → 111.5 MB; 131.6 → 111.1 MB; 144.4 → 114.8 MB; 64.4 → 56.1 MB, respectively. CPU with several active orbs has no demonstrated material gain. The final active timelines stayed near 60 Hz; a reference run varied from 57 to 60 Hz under host load.
+- Bundle logical bytes: 1,989,394 → 2,096,338 (+106,944 bytes, about 5.4%); external voices and Python runtime are excluded. No benchmark counters or test entry points ship in the app.
+- Tests passed: all existing suites, new native-snapshot/metadata/transcript/suspension tests, native test-copy hover/handover/close/nested-suspension checks. The final offline comparison has 157 identical frames across cycle, interruption, rest and wake; contact sheets inspected. Release builds pass.
+- [Detailed results and caveats](performance-2026-11-17.md), [aggregate per-run medians](performance-2026-11-17.json), and [reproduction tools](../tools/performance/README.md). Source snapshots, original app ZIP, raw samples and contact sheets are in `tmp/performance-2026-11-17/`.
+- Installed and healthy: PID 62821, binary `86084b2f1c92…`. The real-app silent thinking/interrupt/end smoke check passed.
+- A 24-hour CPU/RAM/timer observation remains pending until its recording actually finishes. Recorder PID 63413 (parent PID 1) started at 2026-11-17T19:22:35.252783+00:00, scheduled end 2026-11-18T19:22:35.252783+00:00; the job and raw log are in `tmp/performance-2026-11-17/observation-job.json` and `soak-24h.jsonl`. Screen lock uses loginwindow's undocumented distributed notification names in addition to the public workspace sleep/session events; do not simulate distributed lock events globally during tests.
+- The final macOS build uses smaller native windows with the original drawing coordinates and preserves glide origins at monitor edges. It isolates the static rim, side reflections, aura and shadow from the animated beam. The 3-second drift and 2.6-second brake reduced CPU time by 39% over the first 15 seconds after activity. A shared-window prototype increased WindowServer load and stayed outside the release. A lower-cadence prototype traded motion smoothness for about 9% lower CPU with six thinking orbs and also stayed outside the release.
+
 ## 3. Resume work
 
 ```bash
@@ -165,7 +201,7 @@ To reinstall only the app after a Swift change:
 
 ```bash
 ./app/build.sh
-pkill -f 'Prisma.app/Contents/MacOS/Prisma'
+pkill -x Prisma   # by process name; see Gotchas
 rm -rf ~/Applications/Prisma.app
 cp -R app/Prisma.app ~/Applications/
 open ~/Applications/Prisma.app
@@ -189,6 +225,7 @@ To rebuild only the Windows release ZIP:
 
 - **OpenCode's plugin runs in a daemon** (`opencode serve --service`). `process.pid` there is not a window, and there are no client connect or disconnect events. Window detection lives in Prisma (`OpenCodeWindows.swift`).
 - **Never use `minimumInterval: 1/60`** in `TimelineView`; see [section 3.3](orb-and-sessions.md#33-frame-rate) of the reference.
+- **Waiting orbs rest** and pause their timeline ([section 3.4](orb-and-sessions.md#34-resting)). A new animation on a waiting orb must wake it (make `isActive` true), extend `morphingUntil` via `markMorphing`, or call `presentationChanged()`; otherwise it never draws. Time-based motion must read `frame.time` (the light's clock), not the wall clock, or it jumps when the orb wakes.
 - **Never scale `NSVisualEffectView` per frame** or reassign its properties in `updateNSView`; it re-renders its material.
 - **Claude Code** loads plugin hooks from `~/.claude/plugins/cache/prisma-local/prisma/<version>`. Running sessions keep the hook commands they started with but run the updated scripts at that path.
 - **Codex hooks must be trusted;** the app (`Ajustes → Agentes`) and `install.sh` do it through the Codex app server.
@@ -199,7 +236,8 @@ To rebuild only the Windows release ZIP:
 - **The Windows installer requires Python 3.11 or 3.12** with Tkinter and the `py` launcher; `install.ps1` does not use Python 3.13.
 - **`SIGPIPE` is ignored** in `main.swift` and in `CodexHookTrust.apply`; a helper that closes its input must not kill Prisma.
 - **The app's marketplaces point at `~/Library/Application Support/Prisma/plugin-dist`.** Editing `plugin/` in the repository does nothing until the app rebuilds and reconnects (or `install.sh` runs again).
-- **`install.sh` stops Prisma** with `pkill`. The `SIGTERM` handler restores ducked audio.
+- **`install.sh` stops Prisma** with `pkill`. The `SIGTERM` handler restores ducked audio. From an agent's shell tool, use `pkill -x Prisma`: with `pkill -f '…Prisma.app…'` the pattern also matches the shell whose command line contains it, and kills it.
+- **Claude Code's auto mode blocks reinstalling.** It refuses to stop Prisma and replace `~/Applications/Prisma.app`; ask the user to switch modes or run the commands.
 - **Read the port from `runtime.json`;** it can change.
 - **Tests are audible.** Testing through the API speaks aloud and adds orbs. Use `engine: "apple"`, short texts, a test session id, and `POST /session/end` afterwards.
 - **SourceKit reports false errors** for single files of this multi-file module. Check with `swift build` or `swiftc` instead.
@@ -218,16 +256,11 @@ To rebuild only the Windows release ZIP:
 Ordered by priority. Each one should be verified the way this work was: tests, frame sheets for animation, live checks in the app.
 
 1. **Unit tests for the session registry.** Extract the bookkeeping in `AppDelegate` (session orbs, owners, `handOver`, deferred ends, OpenCode folders and orphans, speech routing) into a type without AppKit and test it. Today it is verified only live.
-2. **Lower idle cost.** The SwiftUI view graph is now the main cost, about 4 % CPU per waiting orb. Options:
-   - Draw the background gradients inside the beam canvas.
-   - Lower the waiting frame rate when many orbs are visible.
-   - Move to a Core Animation or Metal renderer, without changing the look.
-
-   Measure with `sample` and with in-app frame counts.
+2. **Lower the cost of active orbs.** The beam dominated the diagnostic runs with six thinking orbs. The released animation keeps its existing cadence. Compare targeted renderer changes with Prisma and WindowServer CPU, physical footprint and timeline counts. Review live `dispatch_source_t` counts alongside a process sample under comparable activity.
 3. **Reduced motion.** Respect `NSWorkspace.shared.accessibilityDisplayShouldReduceMotion`: slower spin, no sweep, shorter morphs.
 4. **Codex orbs that follow the terminal.** Check whether Codex hooks run under the terminal's `codex` process. If they do, report its PID like Claude Code so a closed terminal removes its orb.
 5. **OpenCode details.**
    - Verify the real `session.created` payload; only the mocked test covers it.
    - If prompts expose a client id, use it to tell apart windows in the same folder.
 6. **Claude Code one-shot runs.** Decide with the user whether `claude -p` runs should show an orb at all; the hook PID's process arguments can tell them apart.
-7. **Windows parity.** The Windows app has none of these features.
+7. **Windows parity.** The Windows app has none of these features; its orb was not checked for the idle-redraw cost.

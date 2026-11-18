@@ -49,6 +49,69 @@ struct TestCodexSessionsMonitor {
         precondition(CodexSessionsMonitor.isSessionLocked(one, codexHome: tempCodex) == false,
                      "Released lock must report unlocked")
 
+        testAgentProcessFilter()
+        testAgentProcessListMatchesPS()
         print("Resumed Codex session detection passed")
+    }
+
+    /// The executable name is read like the detectors read it: the last path
+    /// component of the first word.
+    static func testAgentProcessFilter() {
+        let cases: [(String, Substring, Bool)] = [
+            ("/Users/me/.local/bin/codex resume x", "codex", true),
+            ("codex --no-alt-screen resume x", "codex", true),
+            ("  claude --resume x", "claude", true),
+            ("/Users/me/.opencode/bin/opencode serve --service", "opencode", true),
+            ("/Users/me/.local/bin/muse-bin-1.4.14-R7309.1", "muse-bin-1.4.14-R7309.1", true),
+            ("muse resume --last", "muse", true),
+            ("agy --conversation x", "agy", true),
+            ("/bin/sh -c codex resume x", "sh", false),
+            ("/usr/bin/node /Users/me/.npm/bin/opencode", "node", false),
+            ("script -q /dev/null opencode", "script", false),
+            ("codex-helper", "codex-helper", false),
+            ("opencode-helper", "opencode-helper", false),
+            ("/Applications/Codex.app/Contents/MacOS/Codex", "Codex", false),
+            ("codex/", "codex", true),
+        ]
+        for (line, name, agent) in cases {
+            let actual = CodexSessionsMonitor.commandName(of: line[...])
+            precondition(actual == name, "command name of \(line): \(actual)")
+            precondition(CodexSessionsMonitor.isAgentExecutable(actual) == agent, "agent filter for \(line)")
+        }
+    }
+
+    /// The in-process process table keeps the same agent lines `ps` shows.
+    /// Processes can start or exit between the two reads, so retry a few times.
+    static func testAgentProcessListMatchesPS() {
+        func normalized(_ text: String) -> Set<String> {
+            Set(text.split(separator: "\n").map { line in
+                line.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            }.filter { line in
+                guard let space = line.firstIndex(of: " ") else { return false }
+                return CodexSessionsMonitor.isAgentExecutable(
+                    CodexSessionsMonitor.commandName(of: line[line.index(after: space)...]))
+            })
+        }
+        func ps() -> String {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/ps")
+            task.arguments = ["-axo", "pid=,args="]
+            let output = Pipe()
+            task.standardOutput = output
+            try! task.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            task.waitUntilExit()
+            return String(decoding: data, as: UTF8.self)
+        }
+        var mine: Set<String> = []
+        var theirs: Set<String> = []
+        for _ in 0..<5 {
+            mine = normalized(CodexSessionsMonitor.agentProcessList() ?? "")
+            theirs = normalized(ps())
+            if mine == theirs { break }
+            usleep(200_000)
+        }
+        precondition(mine == theirs, "agent processes differ from ps: only ps \(theirs.subtracting(mine)), only Prisma \(mine.subtracting(theirs))")
+        print("Agent process table matches ps (\(mine.count) agent processes)")
     }
 }
